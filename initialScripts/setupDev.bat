@@ -16,6 +16,7 @@ if %errorlevel% == 0 (
 
     powershell -ExecutionPolicy Bypass -File "%~dp0setupDev.ps1
     powershell -ExecutionPolicy Bypass -File "%~dp0registKrokiStarter.ps1
+    pause
     goto :eof
 ) else (
     echo 管理者権限が必要です。再起動します...
