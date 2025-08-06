@@ -1,0 +1,8 @@
+{
+    "asciidoc.preview.asciidoctorAttributes": {
+        
+        "kroki-server-url": "http://localhost:60006"
+    },
+    "asciidoc.extensions.enableKroki": true,
+    "asciidoc.preview.preservePreviewWhenHidden": true
+}
