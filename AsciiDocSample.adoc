@@ -219,7 +219,6 @@ deactivate view
 ----
 ```
 
-
 ==== シーケンス図サンプル
 
 * UMLサンプルイメージ
@@ -227,7 +226,7 @@ deactivate view
 [plantuml,generated-image-format="svg"]
 ----
 @startuml
-title シーケンス図のサンプル
+title シーケンス図のサンプルa
 hide footbox
 
 actor ユーザー as user
