@@ -15,8 +15,9 @@ $rubyIinstallList = @{
 
 $chocoIinstallList = @{
 	"7zip" = $false
-	"JDK8" = $false
-	"OpenJDK" = $false
+	#"JDK8" = $false
+	#"OpenJDK" = $false
+	"temurin17" = $false
 	"python" = $false
 	"ruby" = $false
 	"git" = $false

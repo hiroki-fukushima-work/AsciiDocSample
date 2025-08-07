@@ -1,8 +1,9 @@
 {
-    "asciidoc.preview.asciidoctorAttributes": {
-        
-        "kroki-server-url": "http://localhost:60006"
-    },
-    "asciidoc.extensions.enableKroki": true,
-    "asciidoc.preview.preservePreviewWhenHidden": true
+  "asciidoc.preview.asciidoctorAttributes": {
+    "kroki-server-url": "http://localhost:60006"
+  },
+  "powershell.powerShellDefaultVersion": "PowerShell (x64)",
+  "asciidoc.preview.preservePreviewWhenHidden": false,
+  "asciidoc.extensions.enableKroki": true,
+  "asciidoc.preview.refreshInterval": 0
 }

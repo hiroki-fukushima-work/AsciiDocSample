@@ -226,18 +226,18 @@ deactivate view
 [plantuml,generated-image-format="svg"]
 ----
 @startuml
-title シーケンス図のサンプルa
+title "シーケンス図のサンプル"
 hide footbox
 
-actor ユーザー as user
-participant 制御 as control <<Control>>
-participant "<u>共通データ</u>" as model <<Model>>
-participant 画面 <<View>> #98FB98
+actor "ユーザー" as user
+participant "制御" as control
+participant "共通データ" as model
+participant "画面" as view #98FB98
 
 user -> control : 検索
 activate control
 create model
-control -> model : << new >>
+control -> model : «new»
 control -> model : 検索
 activate model
 control <-- model : 結果
@@ -253,7 +253,6 @@ loop 1, データ数
 end
 view --> user
 deactivate view
-
 @enduml
 ----
 
