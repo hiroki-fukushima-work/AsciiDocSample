@@ -1,4 +1,5 @@
-$scriptPath = $MyInvocation.MyCommand.Path
+$scriptPath = Split-Path -Path $MyInvocation.MyCommand.Path -Parent
+
 $taskName = "KrokiStarter"
 
 $batPath = join-path $scriptPath "startKroki.bat"
