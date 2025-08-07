@@ -58,7 +58,8 @@ NOTE: 本プロジェクトに設定してあるスタイルや属性はサン�
 |PDFやHTML変換時にPluntUMLを変換するためのライブラリ
 
 2.+|initialScripts
-|環境構築で利用するスクリプトなどを格納する
+|環境構築で利用するスクリプトなどを格納する +
+このフォルダを任意のフォルダにコピーしてsetupDev.batやregistKrokiStarter.batを実行してください
 
 ||registKrokiStarter.bat
 |krokiをPCにログインした際に起動する設定を行うためのバッチファイル
