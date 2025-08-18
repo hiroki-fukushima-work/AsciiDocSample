@@ -19,6 +19,8 @@ echo START COVER Convert
 powershell.exe  -NoProfile -ExecutionPolicy RemoteSigned '"%~d0%~p0convertpdf.ps1"'
 echo FINISH COVER Convert
 
+call convert_drawio_to_svg.bat
+
 echo START HTML Convert
 powershell -Command "$env:DIAGRAM_PLANTUML_CLASSPATH='%PLANTUML_JAR%'; Start-Process -NoNewWindow -Wait asciidoctor -ArgumentList '\"%~d0%~p0%ADOC_NAME%.adoc\"', '\"-o\"', '\"%~d0%~p0HTML\\%ADOC_NAME%.html\"', '\"-r\"', '\"asciidoctor-diagram\"'"
 

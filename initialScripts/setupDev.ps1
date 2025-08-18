@@ -27,6 +27,8 @@ $chocoIinstallList = @{
 	"vscode" = $false
 	"winmerge" = $false
 	"teraterm" = $false
+    "vscode-drawio" = $false
+    "drawio" = $false
 }
 $vscodeExtensionIinstallList = @{
 	"ms-ceintl.vscode-language-pack-ja" = $false
@@ -35,6 +37,7 @@ $vscodeExtensionIinstallList = @{
 	"jebbs.plantuml" = $false
 	"asciidoctor.asciidoctor-vscode" = $false
 	"ms-vscode.powershell" = $false
+	"hediet.vscode-drawio" = $false
 }
 
 # Chocolateyのインストール
@@ -42,7 +45,7 @@ $vscodeExtensionIinstallList = @{
 
 try {
     choco -v $_ -match '\d.\d.\d'
-    choco upgrade all
+    choco upgrade all -y
 }
 catch {
     # インストールされていないのでインストールする
