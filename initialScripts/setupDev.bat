@@ -15,7 +15,7 @@ if %errorlevel% == 0 (
     echo 管理者権限で PowerShell スクリプトを実行します...
 
     powershell -ExecutionPolicy Bypass -File "%~dp0setupDev.ps1
-    powershell -ExecutionPolicy Bypass -File "%~dp0registKrokiStarter.ps1
+REM    powershell -ExecutionPolicy Bypass -File "%~dp0registKrokiStarter.ps1
     pause
     goto :eof
 ) else (
