@@ -29,6 +29,7 @@ $chocoIinstallList = @{
 	"teraterm" = $false
 	"putty" = $false
 	"winscp" = $false
+	"sakuraeditor" = $false
     "vscode-drawio" = $false
     "drawio" = $false
 }
