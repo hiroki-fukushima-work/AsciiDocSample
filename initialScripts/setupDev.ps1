@@ -27,6 +27,8 @@ $chocoIinstallList = @{
 	"vscode" = $false
 	"winmerge" = $false
 	"teraterm" = $false
+	"putty" = $false
+	"winscp" = $false
     "vscode-drawio" = $false
     "drawio" = $false
 }
