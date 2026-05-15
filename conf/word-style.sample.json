@@ -1,0 +1,228 @@
+﻿{
+  "Document": {
+    "PageSetup": {
+      "TopMarginMm": 25,
+      "BottomMarginMm": 20,
+      "LeftMarginMm": 25,
+      "RightMarginMm": 20
+    }
+  },
+  "HeaderFooter": {
+    "Header": {
+      "Text": "{title}  {revnumber}",
+      "Style": {
+        "FontName": "游ゴシック",
+        "Size": 9,
+        "Bold": false,
+        "Italic": false,
+        "Alignment": "right",
+        "SpaceAfter": 0,
+        "LineSpacingRule": "Exactly",
+        "LineSpacing": 9
+      }
+    },
+    "Footer": {
+      "Text": "{copyright}",
+      "Style": {
+        "FontName": "游ゴシック",
+        "Size": 8,
+        "Bold": false,
+        "Italic": false,
+        "Alignment": "center",
+        "SpaceBefore": 0,
+        "LineSpacingRule": "Exactly",
+        "LineSpacing": 8
+      }
+    }
+  },
+  "PlantUml": {
+    "Enabled": true,
+    "JavaPath": "java",
+    "JarPath": ".\\lib\\plantuml-1.2025.4.jar",
+    "OutputDir": ".\\generated-images",
+    "DefaultFormat": "png"
+  },
+  "Image": {
+    "MaxWidthMm": 160
+  },
+  "Styles": {
+    "Title": {
+      "FontName": "游ゴシック",
+      "Size": 20,
+      "Bold": true,
+      "Color": 0,
+      "Alignment": "center",
+      "SpaceAfter": 12,
+      "LineSpacingRule": "Exactly",
+      "LineSpacing": 12
+    },
+    "Subtitle": {
+      "FontName": "游ゴシック",
+      "Size": 12,
+      "Bold": false,
+      "Color": 0,
+      "Alignment": "center",
+      "SpaceAfter": 12,
+      "LineSpacingRule": "Exactly",
+      "LineSpacing": 12
+    },
+    "Owner": {
+      "FontName": "游ゴシック",
+      "Size": 10,
+      "Bold": false,
+      "Color": 0,
+      "Alignment": "right",
+      "SpaceAfter": 6,
+      "LineSpacingRule": "Exactly",
+      "LineSpacing": 10 
+    },
+    "Revision": {
+      "FontName": "游ゴシック",
+      "Size": 10,
+      "Bold": false,
+      "Color": 0,
+      "Alignment": "right",
+      "SpaceAfter": 3,
+      "LineSpacingRule": "Exactly",
+      "LineSpacing": 10
+    },
+    "Copyright": {
+      "FontName": "游ゴシック",
+      "Size": 9,
+      "Bold": false,
+      "Color": 0,
+      "Alignment": "center",
+      "SpaceAfter": 12,
+      "LineSpacingRule": "Exactly",
+      "LineSpacing": 9
+    },
+    "Heading1": {
+      "FontName": "游ゴシック",
+      "FontSize": 16,
+      "Bold": true,
+      "Alignment": "Left",
+      "KeepWithNext": true,
+      "LineSpacingRule": "Exactly",
+      "LineSpacing": 12
+    },
+    "Heading2": {
+      "FontName": "游ゴシック",
+      "FontSize": 14,
+      "Bold": true,
+      "Alignment": "Left",
+      "KeepWithNext": true,
+      "LineSpacingRule": "Exactly",
+      "LineSpacing": 12
+    },
+    "Heading3": {
+      "FontName": "游ゴシック",
+      "FontSize": 12,
+      "Bold": true,
+      "Alignment": "Left",
+      "KeepWithNext": true,
+      "LineSpacingRule": "Exactly",
+      "LineSpacing": 12
+    },
+    "Heading4": {
+      "FontName": "游ゴシック",
+      "FontSize": 11,
+      "Bold": true,
+      "Alignment": "Left",
+      "KeepWithNext": true,
+      "LineSpacingRule": "Exactly",
+      "LineSpacing": 11
+    },
+    "HeadingDefault": {
+      "FontName": "游ゴシック",
+      "Size": 11,
+      "Bold": true,
+      "SpaceBefore": 6,
+      "SpaceAfter": 4,
+      "KeepWithNext": true,
+      "LineSpacingRule": "Exactly",
+      "LineSpacing": 11
+    },
+    "Body": {
+      "FontName": "游ゴシック",
+      "Size": 10.5,
+      "Bold": false,
+      "SpaceAfter": 4,
+      "WidowControl": false,
+      "LineSpacingRule": "Exactly",
+      "LineSpacing": 11
+    },
+    "Bullet": {
+      "FontName": "游ゴシック",
+      "Size": 10.5,
+      "Bold": false,
+      "SpaceAfter": 2,
+      "LineSpacingRule": "Exactly",
+      "LineSpacing": 12
+    },
+    "Numbered": {
+      "FontName": "游ゴシック",
+      "Size": 10.5,
+      "Bold": false,
+      "SpaceAfter": 2,
+      "LineSpacingRule": "Exactly",
+      "LineSpacing": 12
+    },
+    "Admonition": {
+      "FontName": "游ゴシック",
+      "Size": 10,
+      "Bold": true,
+      "SpaceBefore": 0,
+      "SpaceAfter": 0,
+      "LineSpacingRule": "Exactly",
+      "LineSpacing": 12
+    },
+    "AdmonitionColors": {
+      "IMPORTANT": "FFE699",
+      "WARNING": "FFF2CC",
+      "CAUTION": "FFF2CC",
+      "NOTE": "D9E1F2",
+      "TIP": "E2EFDA"
+    },
+    "Code": {
+      "FontName": "Consolas",
+      "Size": 9.5,
+      "Bold": false,
+      "SpaceAfter": 6,
+      "LineSpacingRule": "Exactly",
+      "LineSpacing": 10
+    },
+    "TableCaption": {
+      "FontName": "游ゴシック",
+      "Size": 10,
+      "Bold": true,
+      "Alignment": "left",
+      "SpaceBefore": 6,
+      "SpaceAfter": 3,
+      "KeepWithNext": true,
+      "LineSpacingRule": "Exactly"
+    },
+    "TableHeader": {
+      "FontName": "游ゴシック",
+      "Size": 10,
+      "Bold": true,
+      "BackgroundColor": "E6E6E6",
+      "LineSpacingRule": "Exactly"
+    },
+    "TableBody": {
+      "FontName": "游ゴシック",
+      "Size": 10,
+      "Bold": false,
+      "LineSpacingRule": "Exactly"
+    },
+    "FigureCaption": {
+      "FontName": "游ゴシック",
+      "Size": 10,
+      "Bold": true,
+      "Alignment": "center",
+      "SpaceBefore": 6,
+      "SpaceAfter": 3,
+      "KeepWithNext": true,
+      "LineSpacingRule": "Exactly"
+    }
+  }
+}

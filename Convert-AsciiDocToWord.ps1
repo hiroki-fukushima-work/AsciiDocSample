@@ -1,0 +1,2150 @@
+﻿[CmdletBinding()]
+
+param(
+    #[string]$AdocFullPath  = 'C:\Users\hrfukusi\FUJISOFT INCORPORATED\ランディス様_AMI監視案件 - Work\ascPolingTester\manual\asciidoc\ascPolingTester.adoc',
+    #[string]$OutputFullPath = 'C:\Users\hrfukusi\FUJISOFT INCORPORATED\ランディス様_AMI監視案件 - Work\ascPolingTester\manual\asciidoc\out\ascPolingTester.docx',
+    #[string]$ConfigFullPath = 'C:\Users\hrfukusi\FUJISOFT INCORPORATED\ランディス様_AMI監視案件 - Work\ascPolingTester\manual\asciidoc\word-style.sample.json'
+
+    [string]$AdocFullPath  = 'C:\Users\hrfukusi\FUJISOFT INCORPORATED\ランディス様_AMI監視案件 - JP1設定\JP1関連資料\JP1Description.adoc',
+    [string]$OutputFullPath = 'C:\Users\hrfukusi\FUJISOFT INCORPORATED\ランディス様_AMI監視案件 - JP1設定\JP1関連資料\out\JP1Description.docx',
+    [string]$ConfigFullPath = 'C:\Users\hrfukusi\FUJISOFT INCORPORATED\ランディス様_AMI監視案件 - JP1設定\JP1関連資料\word-style.sample.json'
+)
+
+function Resolve-PathFromScript {
+    param (
+        [Parameter(Mandatory)]
+        [string]$Path,
+
+        [Parameter(Mandatory)]
+        [string]$BaseDir
+    )
+
+    if ([System.IO.Path]::IsPathRooted($Path)) {
+        # 絶対パス → そのまま
+        return $Path
+    }
+    else {
+        # 相対パス → スクリプト基準で結合
+        return (Join-Path $BaseDir $Path)
+    }
+}
+
+$baseDir = if ($PSScriptRoot) {
+    $PSScriptRoot
+} else {
+    Split-Path -Parent $MyInvocation.MyCommand.Path
+}
+
+$AdocFullPath = Resolve-PathFromScript -Path $AdocFullPath -BaseDir $baseDir
+$OutputFullPath = Resolve-PathFromScript -Path $OutputFullPath -BaseDir $baseDir
+$ConfigFullPath = Resolve-PathFromScript -Path $ConfigFullPath -BaseDir $baseDir
+
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
+
+$Script:ConverterVersion = 'ps51-v2-20260416'
+$TIMESTAMP = Get-Date -Format "yyyy/MM/dd HH:mm:ss"
+
+Write-Output "$TIMESTAMP Convert-AsciiDocToWord version: $Script:ConverterVersion"
+
+function Convert-RgbToWordColor {
+    param([string]$RgbHex)
+
+    # RRGGBB → BBGGRR
+    $r = $RgbHex.Substring(0, 2)
+    $g = $RgbHex.Substring(2, 2)
+    $b = $RgbHex.Substring(4, 2)
+
+    return "$b$g$r"
+}
+
+function Remove-WrappingQuotes {
+    param([string]$Value)
+
+    if ($null -eq $Value) {
+        return $Value
+    }
+
+    $result = ([string]$Value).Trim()
+    while ($result.Length -ge 2) {
+        $first = $result.Substring(0, 1)
+        $last  = $result.Substring($result.Length - 1, 1)
+        $isDoubleQuoted = ($first -eq '"' -and $last -eq '"')
+        $isSingleQuoted = ($first -eq "'" -and $last -eq "'")
+        if (-not ($isDoubleQuoted -or $isSingleQuoted)) {
+            break
+        }
+        $result = $result.Substring(1, $result.Length - 2).Trim()
+    }
+
+    return $result
+}
+
+function Get-AbsolutePath {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [string]$BaseDirectory
+    )
+
+    if ($null -eq $Path) {
+        throw 'パスが null です。'
+    }
+
+    $normalizedPath = Remove-WrappingQuotes -Value ([string]$Path)
+
+    if ([string]::IsNullOrWhiteSpace($normalizedPath)) {
+        throw 'パスが空文字です。'
+    }
+
+    try {
+        if ([System.IO.Path]::IsPathRooted($normalizedPath)) {
+            return [System.IO.Path]::GetFullPath($normalizedPath)
+        }
+
+        $normalizedBaseDirectory = $BaseDirectory
+        if ([string]::IsNullOrWhiteSpace($normalizedBaseDirectory)) {
+            $normalizedBaseDirectory = (Get-Location).Path
+        }
+        else {
+            $normalizedBaseDirectory = Remove-WrappingQuotes -Value ([string]$normalizedBaseDirectory)
+        }
+
+        return [System.IO.Path]::GetFullPath((Join-Path $normalizedBaseDirectory $normalizedPath))
+    }
+    catch {
+        throw "パスを解決できませんでした: '$Path' -> '$normalizedPath' (BaseDirectory='$BaseDirectory'). $($_.Exception.Message)"
+    }
+}
+
+function Join-CommandLineArguments {
+    param(
+        [string[]]$Arguments
+    )
+
+    $escaped = foreach ($arg in $Arguments) {
+        if ($null -eq $arg) {
+            '""'
+            continue
+        }
+
+        $s = [string]$arg
+
+        if ($s -match '[\s"]') {
+            '"' + ($s -replace '"', '\"') + '"'
+        }
+        else {
+            $s
+        }
+    }
+
+    return ($escaped -join ' ')
+}
+
+function Load-JsonConfig {
+    param([string]$Path)
+
+    if (-not (Test-Path $Path)) {
+        throw "設定ファイルが見つかりません: $Path"
+    }
+
+    return Get-Content -LiteralPath $Path -Raw -Encoding UTF8 | ConvertFrom-Json
+}
+
+function New-Element {
+    param(
+        [string]$Type,
+        [hashtable]$Data
+    )
+
+    $merged = @{ Type = $Type }
+    foreach ($key in $Data.Keys) {
+        $merged[$key] = $Data[$key]
+    }
+    return [pscustomobject]$merged
+}
+
+function Resolve-IncludePath {
+    param(
+        [string]$DirectivePath,
+        [string]$CurrentFileDirectory
+    )
+
+    $normalized = $DirectivePath.Replace('/', [System.IO.Path]::DirectorySeparatorChar)
+    return Get-AbsolutePath -Path $normalized -BaseDirectory $CurrentFileDirectory
+}
+
+function Merge-AttributeMaps {
+    param(
+        [hashtable]$Base,
+        [hashtable]$Overlay
+    )
+
+    $result = @{}
+    foreach ($key in $Base.Keys) { $result[$key] = $Base[$key] }
+    foreach ($key in $Overlay.Keys) { $result[$key] = $Overlay[$key] }
+    return $result
+}
+
+function Normalize-InlineText {
+    param(
+        [string]$Text,
+        [hashtable]$Attributes
+    )
+
+    if ($null -eq $Text) { return '' }
+
+    $value = $Text
+    if ($Attributes) {
+        foreach ($k in $Attributes.Keys) {
+            $token = '{' + $k + '}'
+            $value = $value.Replace($token, [string]$Attributes[$k])
+        }
+    }
+
+    $value = [regex]::Replace($value, '<<([^,>]+)(?:,([^>]+))?>>', '$2')
+    $value = [regex]::Replace($value, 'image::([^\[]+)\[(.*?)\]', '[画像: $1]')
+    $value = [regex]::Replace($value, 'icon:[^\[]+\[(.*?)\]', '$1')
+    $value = [regex]::Replace($value, '\[(?<role>[^\]]+)\]#(?<body>.*?)#', '${body}')
+    #$value = [regex]::Replace($value, '\*([^*]+)\*', '$1')
+    #$value = [regex]::Replace($value, '_([^_]+)_', '$1')
+    $value = [regex]::Replace($value, '`([^`]+)`', '$1')
+    $value = $value -replace '\s+\+$', ''
+    $value = $value -replace '\+$', ''
+    $value = $value -replace '&#169;', '©'
+    return $value.TrimEnd()
+}
+
+function Get-WordConstant {
+    param([string]$Name)
+
+    $map = @{
+        wdCollapseEnd = 0
+        wdPageBreak = 7
+        wdHeaderFooterPrimary = 1
+        wdAlignParagraphLeft = 0
+        wdAlignParagraphCenter = 1
+        wdAlignParagraphRight = 2
+        wdAutoFitContent = 1
+        wdCellAlignVerticalCenter = 1
+        wdLineStyleNone = 0
+        wdListApplyToWholeList = 0
+        wdColorAutomatic = -16777216
+        wdSaveFormatDocumentDefault = 16
+        wdWord9ListBehavior = 1
+        msoShapeRoundedRectangle = 5
+        msoTextOrientationHorizontal = 1
+
+    }
+
+    if (-not $map.ContainsKey($Name)) {
+        throw "未定義のWord定数です: $Name"
+    }
+    return $map[$Name]
+}
+
+function Apply-FontStyle {
+    param(
+        $Range,
+        $StyleConfig
+    )
+
+    if ($null -eq $StyleConfig) { return }
+
+    if ($StyleConfig.PSObject.Properties.Name -contains 'FontName' -and $StyleConfig.FontName) {
+        $fontName = [string]$StyleConfig.FontName
+
+        if (-not [string]::IsNullOrWhiteSpace($fontName)) {
+            try { $Range.Font.Name = $fontName } catch {}
+            try { $Range.Font.NameFarEast = $fontName } catch {}
+            try { $Range.Font.NameAscii = $fontName } catch {}
+            try { $Range.Font.NameOther = $fontName } catch {}
+        }
+    }
+    
+    if ($StyleConfig.PSObject.Properties.Name -contains 'Size' -and $StyleConfig.Size) {
+        $Range.Font.Size = [double]$StyleConfig.Size
+    }
+    if ($StyleConfig.PSObject.Properties.Name -contains 'Bold') {
+        $Range.Font.Bold = [int]([bool]$StyleConfig.Bold)
+    }
+    if ($StyleConfig.PSObject.Properties.Name -contains 'Italic') {
+        $Range.Font.Italic = [int]([bool]$StyleConfig.Italic)
+    }
+    if ($StyleConfig.PSObject.Properties.Name -contains 'Underline' -and [bool]$StyleConfig.Underline) {
+        $Range.Font.Underline = 1
+    }
+    if ($StyleConfig.PSObject.Properties.Name -contains 'Color') {
+        try { $Range.Font.Color = [int]$StyleConfig.Color } catch {}
+    }
+
+    if ($StyleConfig.PSObject.Properties.Name -contains 'Alignment' -and $StyleConfig.Alignment) {
+        switch (([string]$StyleConfig.Alignment).ToLowerInvariant()) {
+            'left'   { $Range.ParagraphFormat.Alignment = Get-WordConstant 'wdAlignParagraphLeft' }
+            'center' { $Range.ParagraphFormat.Alignment = Get-WordConstant 'wdAlignParagraphCenter' }
+            'right'  { $Range.ParagraphFormat.Alignment = Get-WordConstant 'wdAlignParagraphRight' }
+        }
+    }
+
+    if ($StyleConfig.PSObject.Properties.Name -contains 'SpaceBefore') {
+        $Range.ParagraphFormat.SpaceBefore = [double]$StyleConfig.SpaceBefore
+    }
+    if ($StyleConfig.PSObject.Properties.Name -contains 'SpaceAfter') {
+        $Range.ParagraphFormat.SpaceAfter = [double]$StyleConfig.SpaceAfter
+    }
+    if ($StyleConfig.PSObject.Properties.Name -contains 'LeftIndent') {
+        $Range.ParagraphFormat.LeftIndent = [double]$StyleConfig.LeftIndent
+    }
+    if ($StyleConfig.PSObject.Properties.Name -contains 'FirstLineIndent') {
+        $Range.ParagraphFormat.FirstLineIndent = [double]$StyleConfig.FirstLineIndent
+    }
+
+    if ($StyleConfig.PSObject.Properties.Name -contains 'BackgroundColor' -and
+        $StyleConfig.BackgroundColor) {
+
+        # "E6E6E6" → 0x00E6E6E6
+        $color = '0x00' + $StyleConfig.BackgroundColor
+        $Range.Shading.BackgroundPatternColor = [int]$color
+    }
+}
+
+function Apply-ParagraphStyle {
+    param(
+        $Range,
+        $StyleConfig
+    )
+
+    if (-not $Range -or -not $StyleConfig) {
+        return
+    }
+
+    try {
+        if ($StyleConfig.PSObject.Properties.Name -contains 'Alignment' -and $StyleConfig.Alignment) {
+            switch ([string]$StyleConfig.Alignment) {
+                'Left'    { $Range.ParagraphFormat.Alignment = 0 }
+                'Center'  { $Range.ParagraphFormat.Alignment = 1 }
+                'Right'   { $Range.ParagraphFormat.Alignment = 2 }
+                'Justify' { $Range.ParagraphFormat.Alignment = 3 }
+            }
+        }
+    }
+    catch {
+    }
+
+    try {
+        if ($StyleConfig.PSObject.Properties.Name -contains 'KeepWithNext') {
+            $Range.ParagraphFormat.KeepWithNext = [bool]$StyleConfig.KeepWithNext
+        }
+    }
+    catch {
+    }
+
+    try {
+        if ($StyleConfig.PSObject.Properties.Name -contains 'KeepTogether') {
+            $Range.ParagraphFormat.KeepTogether = [bool]$StyleConfig.KeepTogether
+        }
+    }
+    catch {
+    }
+
+    try {
+        if ($StyleConfig.PSObject.Properties.Name -contains 'PageBreakBefore') {
+            $Range.ParagraphFormat.PageBreakBefore = [bool]$StyleConfig.PageBreakBefore
+        }
+    }
+    catch {
+    }
+    
+    try {
+        if ($StyleConfig.PSObject.Properties.Name -contains 'LineSpacingRule' -and
+            $StyleConfig.LineSpacingRule -eq 'Exactly') {
+
+            # Exactly（固定行間）
+            $Range.ParagraphFormat.LineSpacingRule = 2   # wdLineSpaceExactly
+            $Range.ParagraphFormat.LineSpacing     = [float]$StyleConfig.LineSpacing
+        }
+    }
+    catch {
+    }
+
+    try {
+        # 段落前後の余白（省略時は 0）
+        if ($StyleConfig.PSObject.Properties.Name -contains 'SpaceBefore') {
+            $Range.ParagraphFormat.SpaceBefore = [float]$StyleConfig.SpaceBefore
+        } else {
+            $Range.ParagraphFormat.SpaceBefore = 0
+        }
+
+        if ($StyleConfig.PSObject.Properties.Name -contains 'SpaceAfter') {
+            $Range.ParagraphFormat.SpaceAfter = [float]$StyleConfig.SpaceAfter
+        } else {
+            $Range.ParagraphFormat.SpaceAfter = 0
+        }
+    }
+    catch {
+    }
+
+}
+function Format-AdmonitionText {
+    param(
+        [string]$Kind,
+        [string]$Text
+    )
+
+    switch ($Kind) {
+        'IMPORTANT' { return "❗ IMPORTANT: $Text" }
+        'WARNING'   { return "⚠ WARNING: $Text" }
+        'CAUTION'   { return "⚠ CAUTION: $Text" }
+        'NOTE'      { return "📝 NOTE: $Text" }
+        'TIP'       { return "💡 TIP: $Text" }
+        default     { return "[$Kind] $Text" }
+    }
+
+}
+function Parse-InlineText {
+    param([string]$Text)
+
+    $runs = @()
+
+    $pattern = '(\*\*_.*?_\*\*|\*\*.*?\*\*|_.*?_)'
+
+    $parts = [regex]::Split($Text, $pattern)
+
+    foreach ($p in $parts) {
+
+        if ($p -match '^\*\*_(.+)_\*\*$') {
+            $runs += @{
+                Text   = $matches[1]
+                Bold   = $true
+                Italic = $true
+            }
+        }
+        elseif ($p -match '^\*\*(.+)\*\*$') {
+            $runs += @{
+                Text   = $matches[1]
+                Bold   = $true
+                Italic = $false
+            }
+        }
+        elseif ($p -match '^_(.+)_$') {
+            $runs += @{
+                Text   = $matches[1]
+                Bold   = $false
+                Italic = $true
+            }
+        }
+        else {
+            $runs += @{
+                Text   = $p
+                Bold   = $false
+                Italic = $false
+            }
+        }
+    }
+
+    return $runs
+}
+
+function Test-InlineStartBoundary {
+    param(
+        [string]$Text,
+        [int]$Index
+    )
+
+    if ($Index -eq 0) { return $true }
+
+    $prev = $Text.Substring($Index - 1, 1)
+    return [char]::IsWhiteSpace($prev[0])
+}
+
+function Convert-InlineEmphasis {
+    param(
+        [string]$Text
+    )
+
+    $runs = New-Object System.Collections.Generic.List[object]
+
+    $patterns = @(
+        @{ Open = '**__'; Close = '__**'; Bold = $true;  Italic = $true;  NeedBoundary = $false },
+        @{ Open = '__**'; Close = '**__'; Bold = $true;  Italic = $true;  NeedBoundary = $false },
+        @{ Open = '*_';   Close = '_*';   Bold = $true;  Italic = $true;  NeedBoundary = $true  },
+        @{ Open = '_*';   Close = '*_';   Bold = $true;  Italic = $true;  NeedBoundary = $true  },
+        @{ Open = '**';   Close = '**';   Bold = $true;  Italic = $false; NeedBoundary = $false },
+        @{ Open = '__';   Close = '__';   Bold = $false; Italic = $true;  NeedBoundary = $false },
+        @{ Open = '*';    Close = '*';    Bold = $true;  Italic = $false; NeedBoundary = $true  },
+        @{ Open = '_';    Close = '_';    Bold = $false; Italic = $true;  NeedBoundary = $true  }
+    )
+
+    function Add-Run {
+        param(
+            [string]$Value,
+            [bool]$Bold,
+            [bool]$Italic
+        )
+
+        if ([string]::IsNullOrEmpty($Value)) { return }
+
+        $runs.Add([pscustomobject]@{
+            Text   = $Value
+            Bold   = $Bold
+            Italic = $Italic
+        })
+    }
+
+    $plain = New-Object System.Text.StringBuilder
+    $i = 0
+
+    while ($i -lt $Text.Length) {
+
+        $matched = $null
+
+        foreach ($p in $patterns) {
+            $open = [string]$p.Open
+            $close = [string]$p.Close
+
+            if (($i + $open.Length) -gt $Text.Length) {
+                continue
+            }
+
+            if ($Text.Substring($i, $open.Length) -ne $open) {
+                continue
+            }
+
+            if ($p.NeedBoundary -and
+                -not (Test-InlineStartBoundary -Text $Text -Index $i)) {
+                continue
+            }
+
+            $closeIndex = $Text.IndexOf($close, $i + $open.Length)
+
+            if ($closeIndex -lt 0) {
+                continue
+            }
+
+            $matched = @{
+                Pattern = $p
+                CloseIndex = $closeIndex
+            }
+            break
+        }
+
+        if ($matched) {
+            Add-Run -Value $plain.ToString() -Bold $false -Italic $false
+            [void]$plain.Clear()
+
+            $p = $matched.Pattern
+            $open = [string]$p.Open
+            $close = [string]$p.Close
+            $closeIndex = [int]$matched.CloseIndex
+
+            $bodyStart = $i + $open.Length
+            $bodyLength = $closeIndex - $bodyStart
+            $body = $Text.Substring($bodyStart, $bodyLength)
+
+            Add-Run `
+                -Value $body `
+                -Bold ([bool]$p.Bold) `
+                -Italic ([bool]$p.Italic)
+
+            $i = $closeIndex + $close.Length
+            continue
+        }
+
+        [void]$plain.Append($Text.Substring($i, 1))
+        $i++
+    }
+
+    Add-Run -Value $plain.ToString() -Bold $false -Italic $false
+
+    return $runs
+}
+
+# function Append-TextParagraph {
+#     param(
+#         $Document,
+#         [string]$Text,
+#         $StyleConfig,
+#         [switch]$NoTrailingParagraph
+#     )
+    
+
+#     $range = $Document.Content
+#     $range.Collapse((Get-WordConstant 'wdCollapseEnd'))
+    
+#     if ($NoTrailingParagraph) {
+#         $range.Text = $Text
+#     }
+#     else {
+#         $range.Text = $Text + [Environment]::NewLine
+#     }
+#     Apply-FontStyle -Range $range -StyleConfig $StyleConfig
+#     Apply-ParagraphStyle -Range $range -StyleConfig $StyleConfig
+    
+#     return $range
+# }
+
+# function Append-TextParagraph {
+#     param(
+#         $Document,
+#         [string]$Text,
+#         $StyleConfig,
+#         [switch]$NoTrailingParagraph
+#     )
+
+#     $runs = Convert-InlineEmphasis -Text $Text
+#     $plainText = ($runs | ForEach-Object { $_.Text }) -join ''
+
+#     $range = $Document.Content
+#     $range.Collapse((Get-WordConstant 'wdCollapseEnd'))
+
+#     $insertStart = $range.Start
+
+#     if ($NoTrailingParagraph) {
+#         $insertText = $plainText
+#     }
+#     else {
+#         $insertText = $plainText + [Environment]::NewLine
+#     }
+
+#     $range.Text = $insertText
+
+#     Apply-FontStyle -Range $range -StyleConfig $StyleConfig
+#     Apply-ParagraphStyle -Range $range -StyleConfig $StyleConfig
+
+#     $insertEnd = $insertStart + $plainText.Length
+#     $rangeEnd = $range.End
+
+#     if ($insertEnd -gt $rangeEnd) {
+#         $insertEnd = $rangeEnd
+#     }
+
+#     $pos = $insertStart
+
+#     foreach ($run in $runs) {
+#         $length = ([string]$run.Text).Length
+#         if ($length -le 0) {
+#             continue
+#         }
+
+#         $end = $pos + $length
+
+#         if ($end -gt $insertEnd) {
+#             $end = $insertEnd
+#         }
+
+#         if ($pos -lt $end) {
+#             $runRange = $Document.Range($pos, $end)
+
+#             if ($run.Bold) {
+#                 $runRange.Font.Bold = 1
+#             }
+
+#             if ($run.Italic) {
+#                 $runRange.Font.Italic = 1
+#             }
+#         }
+
+#         $pos += $length
+#     }
+
+#     return $range
+# }
+
+function Append-BlankParagraph {
+    param($Document)
+    
+    Append-TextParagraph -Document $Document -Text '' -StyleConfig $null | Out-Null
+}
+
+function Append-TextParagraph {
+    param(
+        $Document,
+        [string]$Text,
+        $StyleConfig,
+        [switch]$NoTrailingParagraph
+    )
+
+    $runs = Convert-InlineEmphasis -Text $Text
+
+    $cursor = $Document.Content
+    $cursor.Collapse((Get-WordConstant 'wdCollapseEnd'))
+
+    $paragraphStart = $cursor.Start
+    $inlineRanges = @()
+
+    foreach ($run in $runs) {
+        $runText = [string]$run.Text
+        if ([string]::IsNullOrEmpty($runText)) {
+            continue
+        }
+
+        #
+        # ★ .Length で位置計算しない
+        # Word に挿入させた Range.End を信用する
+        #
+        $runRange = $Document.Range($cursor.End, $cursor.End)
+        $runRange.Text = $runText
+
+        $inlineRanges += [pscustomobject]@{
+            Range  = $runRange
+            Bold   = [bool]$run.Bold
+            Italic = [bool]$run.Italic
+        }
+
+        $cursor.SetRange($runRange.End, $runRange.End)
+    }
+
+    if (-not $NoTrailingParagraph) {
+        $cursor.InsertParagraphAfter()
+        $cursor.Collapse((Get-WordConstant 'wdCollapseEnd'))
+    }
+
+    $paragraphRange = $Document.Range($paragraphStart, $cursor.End)
+
+    #
+    # 段落全体にベーススタイルを1回だけ
+    #
+    Apply-FontStyle -Range $paragraphRange -StyleConfig $StyleConfig
+    Apply-ParagraphStyle -Range $paragraphRange -StyleConfig $StyleConfig
+
+    #
+    # 後から Bold / Italic だけ上書き
+    #
+    foreach ($item in $inlineRanges) {
+        if ($item.Bold) {
+            $item.Range.Font.Bold = 1
+        }
+
+        if ($item.Italic) {
+            $item.Range.Font.Italic = 1
+        }
+    }
+
+    return $paragraphRange
+}
+
+function Add-CoverPage {
+    param(
+        $Document,
+        $Config,
+        $Metadata
+    )
+
+    $app = $Document.Application
+    $pageWidth  = $Document.PageSetup.PageWidth
+    $pageHeight = $Document.PageSetup.PageHeight
+    $leftMargin = $Document.PageSetup.LeftMargin
+    $rightMargin = $Document.PageSetup.RightMargin
+
+    # タイトル用 角丸テキストボックス
+    $boxWidth  = $app.MillimetersToPoints(140)
+    $boxHeight = $app.MillimetersToPoints(45)
+    $boxLeft   = ($pageWidth - $boxWidth) / 2
+    $boxTop    = $app.MillimetersToPoints(90)
+
+    $titleBox = $Document.Shapes.AddShape(
+        5,          # msoShapeRoundedRectangle
+        $boxLeft,
+        $boxTop,
+        $boxWidth,
+        $boxHeight
+    )
+
+    $titleBox.Fill.Visible = $false
+    $titleBox.Line.Visible = $true
+
+    $textRange = $titleBox.TextFrame.TextRange
+    $textRange.Text = $Metadata.Title + "`r" + $Metadata.Subtitle
+
+    Apply-FontStyle -Range $textRange -StyleConfig $Config.Styles.Title
+    Apply-ParagraphStyle -Range $textRange -StyleConfig $Config.Styles.Title
+
+    $titleLine = $textRange.Paragraphs(1).Range
+    Apply-FontStyle -Range $titleLine -StyleConfig $Config.Styles.Title
+    Apply-ParagraphStyle -Range $titleLine -StyleConfig $Config.Styles.Title
+    $titleLine.Font.Underline = 1
+
+    $subLine = $textRange.Paragraphs(2).Range
+    Apply-FontStyle -Range $subLine -StyleConfig $Config.Styles.Subtitle
+    Apply-ParagraphStyle -Range $subLine -StyleConfig $Config.Styles.Subtitle
+    $subLine.Font.Underline = 0
+
+    # 右下情報ボックス
+    $infoWidth  = $app.MillimetersToPoints(70)
+    $infoHeight = $app.MillimetersToPoints(25)
+
+    $infoLeft = $pageWidth - $rightMargin - $infoWidth
+    $infoTop  = $pageHeight - $app.MillimetersToPoints(55)
+
+    $infoBox = $Document.Shapes.AddTextbox(
+        1,
+        $infoLeft,
+        $infoTop,
+        $infoWidth,
+        $infoHeight
+    )
+
+    # 枠なし
+    $infoBox.Line.Visible = $false
+    $infoBox.Fill.Visible = $false
+
+    # 内部余白少し削る
+    $infoBox.TextFrame.MarginTop    = 0
+    $infoBox.TextFrame.MarginBottom = 0
+    $infoBox.TextFrame.MarginLeft   = 0
+    $infoBox.TextFrame.MarginRight  = 0
+
+    $r = $infoBox.TextFrame.TextRange
+    $r.Text = ""
+
+    # テーブル追加
+    $tbl = $Document.Tables.Add($r, 2, 2)
+
+    # 罫線なし
+    $tbl.Borders.Enable = 0
+
+    # 列幅調整
+    $tbl.Columns.Item(1).Width = $app.MillimetersToPoints(18)
+    $tbl.Columns.Item(2).Width = $app.MillimetersToPoints(40)
+
+    # 値設定
+    $tbl.Cell(1,1).Range.Text = "版数"
+    $tbl.Cell(1,2).Range.Text = $Metadata.RevNumber
+
+    $tbl.Cell(2,1).Range.Text = "改定日"
+    $tbl.Cell(2,2).Range.Text = $Metadata.RevDate
+
+    # スタイル適用
+    for ($row = 1; $row -le 2; $row++) {
+
+        Apply-FontStyle `
+            -Range $tbl.Cell($row,1).Range `
+            -StyleConfig $Config.Styles.Owner
+
+        Apply-ParagraphStyle `
+            -Range $tbl.Cell($row,1).Range `
+            -StyleConfig $Config.Styles.Owner
+
+        Apply-FontStyle `
+            -Range $tbl.Cell($row,2).Range `
+            -StyleConfig $Config.Styles.Revision
+
+        Apply-ParagraphStyle `
+            -Range $tbl.Cell($row,2).Range `
+            -StyleConfig $Config.Styles.Revision
+    }
+}
+
+function Add-PageBreakToDocument {
+    param($Document)
+
+    try {
+        if (-not $pageBreaked) {
+            $range = $Document.Range()
+            $range.Collapse((Get-WordConstant 'wdCollapseEnd'))
+            [void]$range.InsertParagraphAfter()
+            $range.Collapse((Get-WordConstant 'wdCollapseEnd'))
+            [void]$range.InsertBreak((Get-WordConstant 'wdPageBreak'))
+            [void]$range.InsertParagraphAfter()
+        }
+        else {
+            Write-Output "既に改ページ済みのため、追加の改ページはスキップします。"
+        }
+        $script:pageBreaked = $true
+    }
+    catch {
+        Append-TextParagraph -Document $Document -Text '[改ページ挿入失敗]' -StyleConfig $null | Out-Null
+    }
+}
+
+function Append-HeadingParagraph {
+    param(
+        $Document,
+        [string]$Text,
+        [int]$Level,
+        $StyleConfig
+    )
+    
+
+    $range = $Document.Content
+    $range.Collapse((Get-WordConstant 'wdCollapseEnd'))
+    $range.Text = $Text + [Environment]::NewLine
+
+    try {
+        $styleNameJa = '見出し ' + [string]$Level
+        $range.Style = $styleNameJa
+    }
+    catch {
+        try {
+            $styleNameEn = 'Heading ' + [string]$Level
+            $range.Style = $styleNameEn
+        }
+        catch {
+        }
+    }
+
+    Apply-FontStyle -Range $range -StyleConfig $StyleConfig
+    Apply-ParagraphStyle -Range $range -StyleConfig $StyleConfig
+
+    return $range
+}
+
+function Add-TableOfContents {
+    param($Document, $Config)
+
+    
+    Append-HeadingParagraph -Document $Document -Text '目次' -Level 1 -StyleConfig $Config.Styles.Heading1 | Out-Null
+
+    $range = $Document.Content
+    $range.Collapse((Get-WordConstant 'wdCollapseEnd'))
+
+    $Document.TablesOfContents.Add($range, $true, 1, 3) | Out-Null
+
+    $range = $Document.Content
+    $range.Collapse((Get-WordConstant 'wdCollapseEnd'))
+    [void]$range.InsertParagraphAfter()
+}
+
+function Convert-TableRows {
+    param([string[]]$Lines)
+
+    $rows        = @()
+    $maxColumns  = 0
+
+    $block = @()
+
+    function Flush-Block {
+        param([ref]$block, [ref]$rows, [ref]$maxColumns)
+
+        if ($block.Value.Count -eq 0) { return }
+
+        $cells     = @()
+        $usedCols  = 0
+
+        foreach ($line in $block.Value) {
+            $pattern = '(?<rs>\d+\.?)?(?<cs>\d+\+)?(?<header>h)?\|(?<text>[^\|]*)'
+
+            foreach ($m in [regex]::Matches($line, $pattern)) {
+                if (-not $m.Groups['text'].Success) { continue }
+
+                # RowSpan
+                $rowSpan = 1
+                if ($m.Groups['rs'].Success -and $m.Groups['rs'].Value) {
+                    $rowSpan = [int]($m.Groups['rs'].Value -replace '\.', '')
+                }
+
+                # ColSpan
+                $colSpan = 1
+                if ($m.Groups['cs'].Success -and $m.Groups['cs'].Value) {
+                    $colSpan = [int]($m.Groups['cs'].Value -replace '\+', '')
+                }
+
+                $cells += @{
+                    Text     = $m.Groups['text'].Value.Trim()
+                    RowSpan  = $rowSpan
+                    ColSpan  = $colSpan
+                    IsHeader = ($m.Groups['header'].Value -eq 'h')
+                }
+
+                $usedCols += $colSpan
+            }
+        }
+
+        if ($usedCols -gt $maxColumns.Value) {
+            $maxColumns.Value = $usedCols
+        }
+
+        if ($cells.Count -gt 0) {
+            $rows.Value += ,$cells
+        }
+
+        $block.Value = @()
+    }
+
+    $isBlock = $false
+    foreach ($line in $Lines) {
+        if ($line.Trim()) {
+            # 空行じゃない
+            $block += $line
+            if (-not $isBlock) {
+                Flush-Block -block ([ref]$block) -rows ([ref]$rows) -maxColumns ([ref]$maxColumns)
+            }
+        }
+        else {
+            # 空行
+            if ($isBlock) {
+                Flush-Block -block ([ref]$block) -rows ([ref]$rows) -maxColumns ([ref]$maxColumns)
+            }
+            $isBlock = -not $isBlock
+        }
+    }
+
+    if ($isBlock) {
+        Flush-Block -block ([ref]$block) -rows ([ref]$rows) -maxColumns ([ref]$maxColumns)
+    }
+
+    # ★ 列数も一緒に返す
+    return [pscustomobject]@{
+        Rows       = $rows
+        MaxColumns = $maxColumns
+    }
+}
+
+function Add-WordTable {
+    param(
+        $Document,
+        [object[]]$Rows,
+        [int]$ColumnCount,
+        $Config,
+        [string]$Caption,
+        $Attributes
+    )
+    
+    $hasHeader = $false
+    if ($Attributes -and
+        $Attributes.ContainsKey('options')) {
+
+        $opt = [string]$Attributes['options']
+
+        if ($opt -match 'header') {
+            $hasHeader = $true
+        }
+    }
+
+    if ($Caption) {
+        Append-TextParagraph -Document $Document -Text $Caption -StyleConfig $Config.Styles.TableCaption | Out-Null
+    }
+
+    if (-not $Rows -or $Rows.Count -eq 0) {
+        Append-TextParagraph -Document $Document -Text '[空テーブル]' -StyleConfig $Config.Styles.Body | Out-Null
+        return
+    }
+
+    # ----- Word テーブル作成
+    $range = $Document.Content
+    $range.Collapse((Get-WordConstant 'wdCollapseEnd'))
+    $table = $Document.Tables.Add($range, $Rows.Count, $ColumnCount)
+    $table.Borders.Enable = 1
+    try { $table.AutoFitBehavior((Get-WordConstant 'wdAutoFitContent')) | Out-Null } catch {}
+
+    # ----- 論理セル配置
+    $grid      = @{}   # "r,c" -> cell
+    $occupied  = @{}   # "r,c" -> $true
+
+    for ($r = 0; $r -lt $Rows.Count; $r++) {
+        $col = 0
+
+        foreach ($cell in $Rows[$r]) {
+
+            # 既存 occupied をスキップ
+            while ($occupied["$r,$col"]) { $col++ }
+
+            if ($col -ge $ColumnCount) { break }
+
+            # grid 登録
+            $grid["$r,$col"] = $cell
+
+            # rowspan 占有（未来行のみ）
+            if ($cell.RowSpan -gt 1) {
+                for ($rr = 1; $rr -lt $cell.RowSpan; $rr++) {
+                    for ($cc = 0; $cc -lt $cell.ColSpan; $cc++) {
+                        $occupied["$($r+$rr),$($col+$cc)"] = $true
+                    }
+                }
+            }
+
+            # colspan 分進める
+            $col += $cell.ColSpan
+
+            # ★ ここが肝：もう一度 occupied を見る
+            while ($occupied["$r,$col"]) { $col++ }
+        }
+    }
+        
+    # ----- Word に反映（順序保証版）
+    # キストのみ設定
+    for ($r = 0; $r -lt $Rows.Count; $r++) {
+        for ($c = 0; $c -lt $ColumnCount; $c++) {
+
+            $key = "$r,$c"
+            if (-not $grid.ContainsKey($key)) { continue }
+
+            try {
+                $cellRange = $table.Cell($r + 1, $c + 1)
+            }
+            catch {
+                continue
+            }
+
+            $cell = $grid[$key]
+
+            $text = [string]$cell.Text
+            $text = $text -replace '\\n', "`r`n"
+            $cellRange.Range.Text = $text
+
+            $isHeaderCell = $cell.IsHeader -or ($hasHeader -and $r -eq 0)
+
+            if ($isHeaderCell) {
+                Apply-FontStyle -Range $cellRange.Range -StyleConfig $Config.Styles.TableHeader
+            }
+            else {
+                Apply-FontStyle -Range $cellRange.Range -StyleConfig $Config.Styles.TableBody
+            }
+        }
+    }
+    # Mergeのみ実施
+    for ($r = 0; $r -lt $Rows.Count; $r++) {
+        for ($c = 0; $c -lt $ColumnCount; $c++) {
+
+            $key = "$r,$c"
+            if (-not $grid.ContainsKey($key)) { continue }
+
+            $cell = $grid[$key]
+            if ($cell.RowSpan -le 1 -and $cell.ColSpan -le 1) { continue }
+
+            try {
+                $cellRange = $table.Cell($r + 1, $c + 1)
+                $endRow = $r + $cell.RowSpan
+                $endCol = $c + $cell.ColSpan
+                $cellRange.Merge($table.Cell($endRow, $endCol))
+            }
+            catch {
+                continue
+            }
+        }
+    }
+
+    $after = $Document.Content
+    $after.Collapse((Get-WordConstant 'wdCollapseEnd'))
+    $after.InsertParagraphAfter() | Out-Null
+}
+
+function Get-ImageFullPath {
+    param(
+        [Parameter(Mandatory=$true)][string]$ImageReference,
+        [Parameter(Mandatory=$true)][string]$CurrentFileDirectory,
+        [hashtable]$Attributes
+    )
+
+    $imagePath = $ImageReference
+
+    if ($Attributes -and $Attributes.ContainsKey('imagesdir')) {
+        $imagesDir = [string]$Attributes['imagesdir']
+        if (-not [string]::IsNullOrWhiteSpace($imagesDir)) {
+            if (-not [System.IO.Path]::IsPathRooted($imagePath)) {
+                $imagePath = Join-Path $imagesDir $imagePath
+            }
+        }
+    }
+
+    if (-not [System.IO.Path]::IsPathRooted($imagePath)) {
+        $imagePath = Join-Path $CurrentFileDirectory $imagePath
+    }
+
+    return [System.IO.Path]::GetFullPath($imagePath)
+}
+
+function Add-ImageToDocument {
+    param(
+        [Parameter(Mandatory=$true)]$Document,
+        [Parameter(Mandatory=$true)][string]$ImagePath,
+        [string]$Caption,
+        $Config
+    )
+    
+
+    if ($Caption) {
+        Append-TextParagraph -Document $Document -Text $Caption -StyleConfig $Config.Styles.FigureCaption | Out-Null
+    }
+
+    $resolvedImagePath = $ImagePath
+    try {
+        $resolvedImagePath = Get-AbsolutePath -Path $ImagePath
+    }
+    catch {
+        Append-TextParagraph -Document $Document -Text "[画像パス解決失敗: $ImagePath]" -StyleConfig $Config.Styles.Body | Out-Null
+        return
+    }
+
+    if (-not (Test-Path -LiteralPath $resolvedImagePath)) {
+        Append-TextParagraph -Document $Document -Text "[画像が見つかりません: $resolvedImagePath]" -StyleConfig $Config.Styles.Body | Out-Null
+        return
+    }
+
+    $ext = [System.IO.Path]::GetExtension($resolvedImagePath).ToLowerInvariant()
+    #if ($ext -eq ".svg") {
+    #    Append-TextParagraph -Document $Document -Text "[SVG は未対応のためスキップ: $resolvedImagePath]" -StyleConfig $Config.Styles.Body | Out-Null
+    #    return
+    #}
+
+    try {
+        $range = $Document.Content
+        $range.Collapse(0)
+        $shape = $Document.InlineShapes.AddPicture($resolvedImagePath, $false, $true, $range)
+    }
+    catch {
+        Append-TextParagraph -Document $Document -Text "[画像挿入失敗: $resolvedImagePath]" -StyleConfig $Config.Styles.Body | Out-Null
+        Append-TextParagraph -Document $Document -Text ("[詳細] " + $_.Exception.Message) -StyleConfig $Config.Styles.Code | Out-Null
+        return
+    }
+
+    try {
+        if ($Config.Image -and $Config.Image.MaxWidthMm) {
+            $points = $Document.Application.MillimetersToPoints([double]$Config.Image.MaxWidthMm)
+            if ($shape.Width -gt $points) {
+                $shape.LockAspectRatio = $true
+                $shape.Width = $points
+            }
+        }
+    }
+    catch {
+        Append-TextParagraph -Document $Document -Text "[画像サイズ調整失敗: $resolvedImagePath]" -StyleConfig $Config.Styles.Body | Out-Null
+    }
+
+    $Document.Content.InsertParagraphAfter() | Out-Null
+}
+
+function Set-HeaderFooter {
+    param(
+        $Document,
+        $Config,
+        $Metadata,
+        $IsCovePage = $false
+    )
+
+    $section = $Document.Sections.Item(1)
+    $section.PageSetup.DifferentFirstPageHeaderFooter = $true
+    $headerRange = $section.Headers.Item((Get-WordConstant 'wdHeaderFooterPrimary')).Range
+    $footerRange = $section.Footers.Item((Get-WordConstant 'wdHeaderFooterPrimary')).Range
+
+    $headerText = ''
+    if ((-not $IsCovePage) -and $Config.HeaderFooter.Header -and $Config.HeaderFooter.Header.Text) { $headerText = [string]$Config.HeaderFooter.Header.Text }
+    $footerText = ''
+    if ($Config.HeaderFooter.Footer -and $Config.HeaderFooter.Footer.Text) { $footerText = [string]$Config.HeaderFooter.Footer.Text }
+
+    $replacements = @{
+        '{title}'      = [string]($Metadata.Title)
+        '{subtitle}'   = [string]($Metadata.Subtitle)
+        '{author}'     = [string]($Metadata.Author)
+        '{revnumber}'  = [string]($Metadata.RevNumber)
+        '{revdate}'    = [string]($Metadata.RevDate)
+        '{copyright}'  = [string]($Metadata.Copyright)
+    }
+
+    foreach ($key in $replacements.Keys) {
+        $headerText = $headerText.Replace($key, $replacements[$key])
+        $footerText = $footerText.Replace($key, $replacements[$key])
+    }
+
+    $headerRange.Text = $headerText
+    Apply-FontStyle -Range $headerRange -StyleConfig $Config.HeaderFooter.Header.Style
+
+    $footerRange.Text = $footerText
+    Apply-FontStyle -Range $footerRange -StyleConfig $Config.HeaderFooter.Footer.Style
+}
+
+function Get-PlantUmlOutputExtension {
+    param([string]$Format)
+    $f = ([string]$Format).ToLowerInvariant()
+    switch ($f) {
+        'svg' { return 'svg' }
+        'png' { return 'png' }
+        default { return $f }
+    }
+}
+
+function Parse-AsciiDocAttributeList {
+    param([string]$Text)
+
+    $result = @{}
+    if ([string]::IsNullOrWhiteSpace($Text)) { return $result }
+
+    $segments = [regex]::Split($Text, '\s*,\s*')
+    foreach ($segment in $segments) {
+        if ([string]::IsNullOrWhiteSpace($segment)) { continue }
+        if ($segment -match '^(?<key>[A-Za-z0-9_\-]+)\s*=\s*"(?<value>.*)"$') {
+            $result[$matches['key']] = $matches['value']
+            continue
+        }
+        if ($segment -match '^(?<key>[A-Za-z0-9_\-]+)\s*=\s*(?<value>.+)$') {
+            $result[$matches['key']] = $matches['value']
+            continue
+        }
+        $index = $result.Count
+        $result[[string]$index] = $segment
+    }
+
+    return $result
+}
+
+function Invoke-PlantUmlRender {
+    param(
+        [string]$PlantUmlSource,
+        [string]$SourceFilePath,
+        [hashtable]$Attributes,
+        [hashtable]$Options,
+        $Config,
+        [int]$Sequence
+    )
+
+    $result = @{
+        Success = $false
+        ImagePath = $null
+        ErrorMessage = $null
+        Format = $null
+    }
+
+    if (-not $Config.PlantUml -or -not [bool]$Config.PlantUml.Enabled) {
+        $result.ErrorMessage = 'PlantUML が設定で無効化されています。'
+        return [pscustomobject]$result
+    }
+
+    $sourceDir = Split-Path -Parent $SourceFilePath
+    $javaPath = if ($Config.PlantUml.JavaPath) { [string]$Config.PlantUml.JavaPath } else { 'java' }
+    $jarPath = if ($Config.PlantUml.JarPath) { Get-AbsolutePath -Path ([string]$Config.PlantUml.JarPath) -BaseDirectory $PSScriptRoot } else { $null }
+    if ([string]::IsNullOrWhiteSpace($jarPath) -or -not (Test-Path $jarPath)) {
+        $result.ErrorMessage = "PlantUML jar が見つかりません: $jarPath"
+        return [pscustomobject]$result
+    }
+
+    $format = $null
+    if ($Options.ContainsKey('generated-image-format')) {
+        $format = [string]$Options['generated-image-format']
+    }
+    elseif ($Options.ContainsKey('format')) {
+        $format = [string]$Options['format']
+    }
+    elseif ($Config.PlantUml.DefaultFormat) {
+        $format = [string]$Config.PlantUml.DefaultFormat
+    }
+    else {
+        $format = 'png'
+    }
+    $result.Format = $format
+
+    $targetName = $null
+    if ($Options.ContainsKey('target')) {
+        $targetName = [string]$Options['target']
+    }
+    if ([string]::IsNullOrWhiteSpace($targetName)) {
+        $baseName = [System.IO.Path]::GetFileNameWithoutExtension($SourceFilePath)
+        $targetName = '{0}-plantuml-{1:D4}' -f $baseName, $Sequence
+    }
+
+    $outputRoot = if ($Config.PlantUml.OutputDir) { [string]$Config.PlantUml.OutputDir } else { '.\\generated-images' }
+    $outputDir = Get-AbsolutePath -Path $outputRoot -BaseDirectory $sourceDir
+    if (-not (Test-Path $outputDir)) {
+        [void](New-Item -ItemType Directory -Path $outputDir -Force)
+    }
+
+    $tempDir = Join-Path $outputDir '_tmp'
+    if (-not (Test-Path $tempDir)) {
+        [void](New-Item -ItemType Directory -Path $tempDir -Force)
+    }
+
+    $tempSourcePath = Join-Path $tempDir ($targetName + '.puml')
+    $encoding = New-Object System.Text.UTF8Encoding($false)
+    [System.IO.File]::WriteAllText($tempSourcePath, $PlantUmlSource, $encoding)
+
+    $outputExt = Get-PlantUmlOutputExtension -Format $format
+    $OutputFullPath = Join-Path $outputDir ($targetName + '.' + $outputExt)
+    if (Test-Path $OutputFullPath) { Remove-Item -LiteralPath $OutputFullPath -Force }
+
+    $arguments = @('-jar', $jarPath, ('-t' + $format), '-charset', 'UTF-8', '-o', $outputDir, $tempSourcePath)
+
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = $javaPath
+    $psi.UseShellExecute = $false
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    $psi.CreateNoWindow = $true
+    $psi.Arguments = Join-CommandLineArguments -Arguments $arguments
+
+    $process = [System.Diagnostics.Process]::Start($psi)
+    $stdOut = $process.StandardOutput.ReadToEnd()
+    $stdErr = $process.StandardError.ReadToEnd()
+    $process.WaitForExit()
+
+    if ($process.ExitCode -ne 0) {
+        $message = ($stdErr, $stdOut | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }) -join ' '
+        if ([string]::IsNullOrWhiteSpace($message)) { $message = 'PlantUML 実行エラー' }
+        $result.ErrorMessage = $message.Trim()
+        return [pscustomobject]$result
+    }
+
+    if (-not (Test-Path $OutputFullPath)) {
+        $generated = Get-ChildItem -LiteralPath $outputDir -Filter ($targetName + '.*') -File | Select-Object -First 1
+        if ($generated) {
+            $OutputFullPath = $generated.FullName
+        }
+    }
+
+    if (-not (Test-Path $OutputFullPath)) {
+        $result.ErrorMessage = "PlantUML 画像が生成されませんでした: $targetName"
+        return [pscustomobject]$result
+    }
+
+    $result.Success = $true
+    $result.ImagePath = $OutputFullPath
+    return [pscustomobject]$result
+}
+
+function Get-NextNonEmptyTrimmedLine {
+    param(
+        [string[]]$Lines,
+        [int]$StartIndex
+    )
+
+    for ($i = $StartIndex; $i -lt $Lines.Count; $i++) {
+        $candidate = [string]$Lines[$i]
+        if (-not [string]::IsNullOrWhiteSpace($candidate)) {
+            return $candidate.Trim()
+        }
+    }
+
+    return $null
+}
+
+function Parse-AsciiDocFile {
+    param(
+        [string]$Path,
+        [hashtable]$Attributes,
+        [System.Collections.Generic.HashSet[string]]$Visited,
+        $Config
+    )
+
+    $absolutePath = Get-AbsolutePath -Path $Path
+    if ($Visited.Contains($absolutePath)) {
+        return [pscustomobject]@{
+            Metadata = @{}
+            Elements = @()
+            Attributes = $Attributes
+        }
+    }
+    [void]$Visited.Add($absolutePath)
+
+    $fileDir = Split-Path -Parent $absolutePath
+    $text = Get-Content -LiteralPath $absolutePath -Encoding UTF8 -Raw
+    $text = $text -replace ' \+\r\n', "`n"
+    Set-Content -LiteralPath "c:\\work\\asciidoc.txt" -Value $text -Encoding UTF8 
+    $lines = $text -split "\r\n"
+
+    $elements = New-Object System.Collections.Generic.List[object]
+    $metadata = @{
+        Title = $null
+        Subtitle = $null
+        Author = $null
+        RevNumber = $null
+        RevDate = $null
+        Copyright = $null
+        ImagesDir = $null
+    }
+    $paragraphBuffer = New-Object System.Collections.Generic.List[string]
+    $pendingCaption = $null
+    $pendingBlockAttributes = $null
+    $inFence = $false
+    $fenceDelimiter = $null
+    $fenceLines = New-Object System.Collections.Generic.List[string]
+    $pendingBlockType = $null
+    $lineIndex = 0
+    $plantUmlSequence = 1
+    
+
+    function Flush-ParagraphBuffer {
+        if ($paragraphBuffer.Count -eq 0) { return }
+
+        $parts = New-Object System.Collections.Generic.List[string]
+        foreach ($p in $paragraphBuffer) {
+            $t = [string]$p
+            if ($t -eq '__LINEBREAK__') {
+                $parts.Add([Environment]::NewLine)
+            }
+            else {
+                $parts.Add($t.TrimEnd())
+            }
+        }
+
+        $joined = ''
+        foreach ($part in $parts) {
+            if ($part -eq [Environment]::NewLine) {
+                $joined += [Environment]::NewLine
+            }
+            elseif ([string]::IsNullOrWhiteSpace($joined)) {
+                $joined = $part
+            }
+            elseif ($joined.EndsWith([Environment]::NewLine)) {
+                $joined += $part
+            }
+            else {
+                $joined += ' ' + $part
+            }
+        }
+
+        $normalized = Normalize-InlineText -Text $joined -Attributes $Attributes
+        if (-not [string]::IsNullOrWhiteSpace($normalized)) {
+            $elements.Add((New-Element -Type 'paragraph' -Data @{ Text = $normalized }))
+        }
+        $paragraphBuffer.Clear()
+    }
+
+    while ($lineIndex -lt $lines.Count) {
+        $line = [string]$lines[$lineIndex]
+        $trimmed = $line.Trim()
+        
+
+        if ($inFence) {
+            if ($trimmed -eq $fenceDelimiter) {
+                $blockText = ($fenceLines -join [Environment]::NewLine)
+                if ($pendingBlockType -eq 'plantuml') {
+                    $render = Invoke-PlantUmlRender -PlantUmlSource $blockText -SourceFilePath $absolutePath -Attributes $Attributes -Options $pendingBlockAttributes -Config $Config -Sequence $plantUmlSequence
+                    $plantUmlSequence++
+                    if ($render.Success) {
+                        $elements.Add((New-Element -Type 'image' -Data @{ Path = $render.ImagePath; Caption = $pendingCaption; GeneratedBy = 'plantuml'; Source = $blockText }))
+                    }
+                    else {
+                        $fallback = "[PlantUML 画像生成失敗] $($render.ErrorMessage)"
+                        $elements.Add((New-Element -Type 'admonition' -Data @{ Kind = 'WARNING'; Text = $fallback }))
+                        $elements.Add((New-Element -Type 'code' -Data @{ Text = $blockText }))
+                    }
+                }
+                else {
+                    $elements.Add((New-Element -Type 'code' -Data @{ Text = $blockText }))
+                }
+
+                $fenceLines.Clear()
+                $inFence = $false
+                $fenceDelimiter = $null
+                $pendingBlockType = $null
+                $pendingBlockAttributes = $null
+                $pendingCaption = $null
+                $lineIndex++
+                continue
+            }
+            $fenceLines.Add($line)
+            $lineIndex++
+            continue
+        }
+
+        if ([string]::IsNullOrWhiteSpace($trimmed)) {
+            Flush-ParagraphBuffer
+            $lineIndex++
+            continue
+        }
+
+        if ($trimmed.StartsWith('//')) {
+            $lineIndex++
+            continue
+        }
+
+        if ($trimmed -match '^(ifeval|ifdef|ifndef|endif)::') {
+            $lineIndex++
+            continue
+        }
+
+        if ($trimmed -match '^:([^:]+):\s*(.*)$') {
+            Flush-ParagraphBuffer
+            $attrName = $matches[1].Trim()
+            $attrValue = $matches[2]
+            if ($attrName -eq 'author') {
+                $parts = New-Object System.Collections.Generic.List[string]
+                if ($attrValue) { $parts.Add($attrValue.Trim()) }
+                while ($lineIndex + 1 -lt $lines.Count) {
+                    $current = [string]$lines[$lineIndex]
+                    $peek = [string]$lines[$lineIndex + 1]
+                    if ($current.TrimEnd().EndsWith('+')) {
+                        if ($parts.Count -gt 0) {
+                            $parts[$parts.Count - 1] = $parts[$parts.Count - 1].TrimEnd(' ', '+')
+                        }
+                        $lineIndex++
+                        $parts.Add($peek.Trim())
+                        continue
+                    }
+                    break
+                }
+                $attrValue = ($parts -join [Environment]::NewLine)
+            }
+            $Attributes[$attrName] = $attrValue
+            switch ($attrName) {
+                'title' {$metadata.Title = Normalize-InlineText -Text $attrValue -Attributes $Attributes }
+                'subtitle' { $metadata.Subtitle = Normalize-InlineText -Text $attrValue -Attributes $Attributes }
+                'author' { $metadata.Author = $attrValue }
+                'revnumber' { $metadata.RevNumber = $attrValue }
+                'revdate' { $metadata.RevDate = $attrValue }
+                'copyright' { $metadata.Copyright = Normalize-InlineText -Text $attrValue -Attributes $Attributes }
+                'imagesdir' { $metadata.ImagesDir = $attrValue }
+                default { }
+            }
+            $lineIndex++
+            continue
+        }
+
+        if ($trimmed -match '^include::([^\[]+)\[(.*?)\]$') {
+            Flush-ParagraphBuffer
+            $includePath = Resolve-IncludePath -DirectivePath $matches[1] -CurrentFileDirectory $fileDir
+            if (Test-Path $includePath) {
+                $childAttributes = Merge-AttributeMaps -Base $Attributes -Overlay @{}
+                $included = Parse-AsciiDocFile -Path $includePath -Attributes $childAttributes -Visited $Visited -Config $Config
+                foreach ($child in $included.Elements) { $elements.Add($child) }
+            }
+            else {
+                $elements.Add((New-Element -Type 'paragraph' -Data @{ Text = "[include ファイルが見つかりません: $includePath]" }))
+            }
+            $lineIndex++
+            continue
+        }
+
+        if ($trimmed -eq '<<<') {
+            Flush-ParagraphBuffer
+            $elements.Add((New-Element -Type 'pagebreak' -Data @{}))
+            $lineIndex++
+            # 改ページの後の空行を捨てる
+            while ($lineIndex -lt $lines.Count) {
+                $tLine = [string]$lines[$lineIndex]
+                $tTrim = $tLine.Trim()
+                if ($tTrim) {
+                    break
+                }
+                $lineIndex++
+            }
+            continue
+        }
+
+        if ($trimmed -match '^=\s+(.+?)(?:\s*:\s*(.+))?$') {
+            Flush-ParagraphBuffer
+            $metadata.Title = Normalize-InlineText -Text $matches[1] -Attributes $Attributes
+            if (-not $metadata.Subtitle) {
+                 $metadata.Subtitle = $null
+            }
+            if ($matches[2]) { 
+                $metadata.Subtitle = Normalize-InlineText -Text $matches[2] -Attributes $Attributes 
+            }
+            $Attributes['title'] = $metadata.Title
+            if ($metadata.Subtitle) { $Attributes['subtitle'] = $metadata.Subtitle }
+            $elements.Add((New-Element -Type 'title' -Data @{ Text = $metadata.Title; Subtitle = $metadata.Subtitle }))
+            $lineIndex++
+            continue
+        }
+
+        if ($trimmed -match '^(==+)\s+(.+)$') {
+            Flush-ParagraphBuffer
+            $level = $matches[1].Length - 1
+            $text = Normalize-InlineText -Text $matches[2] -Attributes $Attributes
+            $elements.Add((New-Element -Type 'heading' -Data @{ Level = $level; Text = $text }))
+            $lineIndex++
+            continue
+        }
+
+        if ($trimmed -match '^\.(.+)$' -and -not $trimmed.StartsWith('..')) {
+            $nextTrimmed = Get-NextNonEmptyTrimmedLine -Lines $lines -StartIndex ($lineIndex + 1)
+
+            $isCaptionTarget = $false
+            if ($nextTrimmed) {
+                if ($nextTrimmed -match '^\[.*\]$' -or
+                    $nextTrimmed -match '^image::' -or
+                    $nextTrimmed -match '^\|={3,}$' -or
+                    $nextTrimmed -eq '----' -or
+                    $nextTrimmed -eq '....' -or
+                    $nextTrimmed -eq '```') {
+                    $isCaptionTarget = $true
+                }
+            }
+
+            if ($isCaptionTarget) {
+                Flush-ParagraphBuffer
+                $pendingCaption = Normalize-InlineText -Text $matches[1] -Attributes $Attributes
+                $lineIndex++
+                continue
+            }
+        }
+
+        if ($trimmed -match '^\[(.+)\]$') {
+            Flush-ParagraphBuffer
+            $inside = $matches[1]
+            if ($inside -match '^(NOTE|TIP|IMPORTANT|WARNING|CAUTION)$') {
+                $kind = $matches[1]
+                if ($lineIndex + 1 -lt $lines.Count -and $lines[$lineIndex + 1].Trim() -eq '====') {
+                    $lineIndex += 2
+                    $body = New-Object System.Collections.Generic.List[string]
+                    while ($lineIndex -lt $lines.Count -and $lines[$lineIndex].Trim() -ne '====') {
+                        $body.Add((Normalize-InlineText -Text $lines[$lineIndex] -Attributes $Attributes))
+                        $lineIndex++
+                    }
+                    $elements.Add((New-Element -Type 'admonition' -Data @{ Kind = $kind; Text = (($body | Where-Object { $_ }) -join ' ') }))
+                    $lineIndex++
+                    continue
+                }
+            }
+
+            # 行頭 admonition（NOTE: / WARNING: など）
+            if ($line -match '^(NOTE|TIP|IMPORTANT|WARNING|CAUTION):\s*(.+)$') {
+                $elements.Add((New-Element -Type 'admonition' -Data @{ Kind = $kind; Text = (Normalize-InlineText -Text $matches[2] -Attributes $Attributes) }))
+                continue
+            }
+
+            $attrList = Parse-AsciiDocAttributeList -Text $inside
+            if ($attrList.Values -contains 'plantuml' -or $inside -match '^plantuml(?:,|$)') {
+                $pendingBlockType = 'plantuml'
+                $pendingBlockAttributes = $attrList
+                $lineIndex++
+                continue
+            }
+            if ($attrList.Values -contains 'source' -or $inside -match '^source(?:,|$)') {
+                $pendingBlockType = 'source'
+                $pendingBlockAttributes = $attrList
+                $lineIndex++
+                continue
+            }
+            if ($inside -match 'cols=' -or $inside -match 'options=') {
+                $pendingBlockType = 'table'
+                $pendingBlockAttributes = $attrList
+                $lineIndex++
+                continue
+            }
+
+            $pendingBlockAttributes = $attrList
+            $lineIndex++
+            continue
+        }
+
+        if ($trimmed -eq '```' -or $trimmed -eq '----' -or $trimmed -eq '....') {
+            Flush-ParagraphBuffer
+            $inFence = $true
+            $fenceDelimiter = $trimmed
+            $fenceLines.Clear()
+            if (-not $pendingBlockType) { $pendingBlockType = 'code' }
+            $lineIndex++
+            continue
+        }
+
+        if ($trimmed -match '^image::([^\[]+)\[(.*?)\]$') {
+            Flush-ParagraphBuffer
+            $imageRef = $matches[1]
+            $imagePath = Get-ImageFullPath -ImageReference $imageRef -CurrentFileDirectory $fileDir -Attributes $Attributes
+            $elements.Add((New-Element -Type 'image' -Data @{ Path = $imagePath; Caption = $pendingCaption }))
+            $pendingCaption = $null
+            $pendingBlockAttributes = $null
+            $lineIndex++
+            continue
+        }
+
+        if ($trimmed -match '^\|={3,}$') {
+            Flush-ParagraphBuffer
+            #Write-Output "Table $trimmed"
+            $tableLines = New-Object System.Collections.Generic.List[string]
+            $lineIndex++
+            while ($lineIndex -lt $lines.Count) {
+                $tLine = [string]$lines[$lineIndex]
+                $tTrim = $tLine.Trim()
+                #Write-Output "Table $tTrim"
+                if ($tTrim -match '^\|={3,}$') { break }
+                # 空行は捨てる
+                if ($tTrim) {
+                    $tableLines.Add($tLine)
+                }
+                $lineIndex++
+            }
+            $tableInfo = Convert-TableRows -Lines $tableLines
+            $elements.Add((New-Element -Type 'table' -Data @{ tableInfo = $tableInfo; Caption = $pendingCaption; Attributes = $pendingBlockAttributes }))
+            $pendingCaption = $null
+            $pendingBlockAttributes = $null
+            $pendingBlockType = $null
+            $lineIndex++
+            continue
+        }
+
+        if ($trimmed -match '^([\*\-])\s+(.+)$') {
+            Flush-ParagraphBuffer
+            $indentLength = ([regex]::Match($line, '^\s*')).Value.Length
+            $level = [Math]::Max(1, [int][Math]::Floor($indentLength / 2) + 1)
+            $elements.Add((New-Element -Type 'bullet' -Data @{ Text = (Normalize-InlineText -Text $matches[2] -Attributes $Attributes); Level = $level }))
+            $lineIndex++
+            continue
+        }
+
+        if ($trimmed -match '^(\d+)\.\s+(.+)$') {
+            Flush-ParagraphBuffer
+            $indentLength = ([regex]::Match($line, '^\s*')).Value.Length
+            $level = [Math]::Max(1, [int][Math]::Floor($indentLength / 2) + 1)
+            $elements.Add((New-Element -Type 'numbered' -Data @{ Text = (Normalize-InlineText -Text $matches[2] -Attributes $Attributes); Level = $level }))
+            $lineIndex++
+            continue
+        }
+
+        if ($trimmed -match '^\.+\s+(.+)$') {
+            Flush-ParagraphBuffer
+
+            $dotPrefix = ([regex]::Match($trimmed, '^\.+')).Value.Length
+            $text = Normalize-InlineText -Text $matches[1] -Attributes $Attributes
+
+            $lineIndex++
+
+            # AsciiDoc のリスト継続:
+            # +
+            # 続き
+            # を複数回処理する
+            while (($lineIndex + 1) -lt $lines.Count -and
+                ([string]$lines[$lineIndex]).Trim() -eq '+') {
+
+                $continueLine = [string]$lines[$lineIndex + 1]
+                $continueText = Normalize-InlineText -Text $continueLine -Attributes $Attributes
+
+                if (-not [string]::IsNullOrWhiteSpace($continueText)) {
+                    # Word の Shift + Enter
+                    $text = $text + [char]11 + $continueText
+                }
+
+                $lineIndex += 2
+            }
+
+            $elements.Add((New-Element -Type 'numbered' -Data @{
+                Text  = $text
+                Level = $dotPrefix
+            }))
+
+            continue
+        }
+
+        if ($trimmed -match '^(NOTE|TIP|IMPORTANT|WARNING|CAUTION):\s+(.+)$') {
+            Flush-ParagraphBuffer
+            $elements.Add((New-Element -Type 'admonition' -Data @{ Kind = $matches[1]; Text = (Normalize-InlineText -Text $matches[2] -Attributes $Attributes) }))
+            $lineIndex++
+            continue
+        }
+
+        if ($trimmed -match '^\[\[([^\]]+)\]\]$') {
+            $lineIndex++
+            continue
+        }
+
+        if ($line.TrimEnd().EndsWith('+')) {
+            # 行末の + を除去
+            $withoutPlus = $line.TrimEnd()
+            $withoutPlus = $withoutPlus.Substring(0, $withoutPlus.Length - 1)
+
+            $paragraphBuffer.Add($withoutPlus)
+            $paragraphBuffer.Add('__LINEBREAK__')
+            $lineIndex++
+            continue
+        }
+
+        $paragraphBuffer.Add($line)
+        $lineIndex++
+    }
+
+    Flush-ParagraphBuffer
+
+    return [pscustomobject]@{
+        Metadata = $metadata
+        Elements = $elements
+        Attributes = $Attributes
+    }
+}
+
+function Add-ListParagraph {
+    param(
+        $Document,
+        [string]$Text,
+        [int]$Level,
+        $StyleConfig,
+        [switch]$Numbered,
+        [int]$ListIndex = 1,
+        [int]$ParentIndex = 1
+    )
+
+    if ($Numbered) {
+        if ($Level -eq 1) {
+            $prefix = "$($ListIndex)) "
+        }
+        else {
+            $prefix = "$($ParentIndex)-$($ListIndex)) "
+        }
+    }
+    else {
+        $prefix = '• '
+    }
+
+    $style = $StyleConfig.PSObject.Copy()
+    $leftIndent = (($Level - 1) * 18)
+
+    if ($style.PSObject.Properties.Name -contains 'LeftIndent') {
+        $style.LeftIndent = $leftIndent
+    }
+    else {
+        $style | Add-Member -NotePropertyName LeftIndent -NotePropertyValue $leftIndent
+    }
+
+    Append-TextParagraph `
+        -Document $Document `
+        -Text ($prefix + $Text) `
+        -StyleConfig $style | Out-Null
+}
+
+function Build-WordDocument {
+    param(
+        [object]$Parsed,
+        $Config,
+        [string]$OutputFullPath
+    )
+    
+    $currentListLevel = 0
+    
+    # 番号付き箇条書きの番号
+    $listCounters = @(0,0,0,0,0,0)
+
+    # 章番号
+    $headingCounters = @(0,0,0,0,0,0)
+    $isFirstHeading = $true
+
+    $word = $null
+    $document = $null
+    try {
+        $word = New-Object -ComObject Word.Application
+        $word.Visible = $false
+        $document = $word.Documents.Add()
+
+        if ($Config.Document -and $Config.Document.PageSetup) {
+            if ($Config.Document.PageSetup.TopMarginMm) { $document.PageSetup.TopMargin = $word.MillimetersToPoints([double]$Config.Document.PageSetup.TopMarginMm) }
+            if ($Config.Document.PageSetup.BottomMarginMm) { $document.PageSetup.BottomMargin = $word.MillimetersToPoints([double]$Config.Document.PageSetup.BottomMarginMm) }
+            if ($Config.Document.PageSetup.LeftMarginMm) { $document.PageSetup.LeftMargin = $word.MillimetersToPoints([double]$Config.Document.PageSetup.LeftMarginMm) }
+            if ($Config.Document.PageSetup.RightMarginMm) { $document.PageSetup.RightMargin = $word.MillimetersToPoints([double]$Config.Document.PageSetup.RightMarginMm) }
+        }
+
+        $metadata = [pscustomobject]@{
+            Title = [string]($Parsed.Metadata.Title)
+            Subtitle = [string]($Parsed.Metadata.Subtitle)
+            Author = [string]($Parsed.Metadata.Author)
+            RevNumber = [string]($Parsed.Metadata.RevNumber)
+            RevDate = [string]($Parsed.Metadata.RevDate)
+            Copyright = [string]($Parsed.Metadata.Copyright)
+        }
+
+        $ownerInserted = $false
+        $hasTitlePage = $false
+        $tocInserted = $false
+        $script:pageBreaked = $false
+        foreach ($element in $Parsed.Elements) {
+            if (-not $tocInserted -and $hasTitlePage -and $element.Type -ne 'title') {
+                Add-PageBreakToDocument -Document $document
+                Add-TableOfContents -Document $document -Config $Config
+                $script:pageBreaked = $false
+                Add-PageBreakToDocument -Document $document
+                $tocInserted = $true
+            }
+
+            # 箇条書きの連番リセット
+            $resetList = $false
+
+            switch ($element.Type) {
+
+                'heading'   { $resetList = $true }
+                'paragraph' { $resetList = $true }
+                'pagebreak' { $resetList = $true }
+                'title'     { $resetList = $true }
+
+                default     { $resetList = $false }
+            }
+
+            if ($resetList) {
+                $listCounters = @(0,0,0,0,0,0)
+                $currentListLevel = 0
+            }
+
+            switch ($element.Type) {
+                'title' {
+                    
+                    Set-HeaderFooter -Document $document -Config $Config -Metadata $metadata -IsCovePage $true
+
+                    Add-CoverPage `
+                        -Document $document `
+                        -Config $Config `
+                        -Metadata $metadata
+                    
+                    $hasTitlePage = $true
+                    $script:pageBreaked = $false
+                }
+                'heading' {
+                    $level = [int]$element.Level
+                    if ($level -lt 1) { $level = 1 }
+                    if ($level -gt 6) { $level = 6 }
+
+                    if ($level -eq 1 -and -not $isFirstHeading) {
+                        Add-PageBreakToDocument -Document $document
+                    }
+                    $isFirstHeading = $false
+
+                    $headingCounters[$level - 1]++
+                    for ($i = $level; $i -lt $headingCounters.Length; $i++) {
+                        $headingCounters[$i] = 0
+                    }
+
+                    $nums = New-Object System.Collections.Generic.List[string]
+                    for ($i = 0; $i -lt $level; $i++) {
+                        if ($headingCounters[$i] -gt 0) {
+                            $nums.Add([string]$headingCounters[$i])
+                        }
+                    }
+
+                    $headingText = (($nums -join '.') + ' ' + $element.Text).Trim()
+
+                    $styleName = 'Heading' + [string]$level
+                    $styleConfig = $Config.Styles.$styleName
+                    if (-not $styleConfig) { $styleConfig = $Config.Styles.HeadingDefault }
+
+                    Append-HeadingParagraph -Document $document -Text $headingText -Level $level -StyleConfig $styleConfig | Out-Null
+                
+                }
+                'paragraph' { 
+                    Append-TextParagraph -Document $document -Text $element.Text -StyleConfig $Config.Styles.Body | Out-Null 
+                }
+                'bullet' {
+                    $level = [int]$element.Level
+                    if ($currentListLevel -gt 0) {
+                        $level = $level + $currentListLevel
+                    }
+
+                    Add-ListParagraph `
+                        -Document $document `
+                        -Text $element.Text `
+                        -Level $level `
+                        -StyleConfig $Config.Styles.Bullet
+                }
+                'numbered' {
+                    $level = [int]$element.Level
+                    if ($level -lt 1) { $level = 1 }
+                    if ($level -gt 6) { $level = 6 }
+
+                    $currentListLevel = $level
+
+                    $listCounters[$level - 1]++
+
+                    for ($i = $level; $i -lt $listCounters.Length; $i++) {
+                        $listCounters[$i] = 0
+                    }
+
+                    $parentNo = $listCounters[0]
+                    $currentNo = $listCounters[$level - 1]
+
+                    Add-ListParagraph `
+                        -Document $document `
+                        -Text $element.Text `
+                        -Level $level `
+                        -StyleConfig $Config.Styles.Numbered `
+                        -Numbered `
+                        -ParentIndex $parentNo `
+                        -ListIndex $currentNo
+                }
+                'admonition' { 
+
+                    $formattedText = Format-AdmonitionText -Kind $element.Kind -Text $element.Text
+
+                    $range = Append-TextParagraph `
+                        -Document $document `
+                        -Text $formattedText `
+                        -StyleConfig $Config.Styles.Admonition
+
+                    # 種類別 背景色
+                    $colorHex = $Config.Styles.AdmonitionColors.$($element.Kind)
+                    if ($colorHex) {
+                        try {
+                            $wordColor = Convert-RgbToWordColor $colorHex
+                            $range.Paragraphs(1).Shading.BackgroundPatternColor =
+                                [int]("0x00$wordColor")
+                        } catch {
+                            # 失敗しても致命的ではないので握りつぶし
+                        }
+                    }
+                }
+                'code' {
+                    $style = $Config.Styles.Code
+
+                    if ($currentListLevel -gt 0) {
+                        $style = $style.PSObject.Copy()
+                        $style.LeftIndent = 18 + (($currentListLevel - 1) * 18)
+                    }
+
+                    Append-TextParagraph `
+                        -Document $document `
+                        -Text $element.Text `
+                        -StyleConfig $style | Out-Null
+                }
+                'pagebreak' { 
+                    Add-PageBreakToDocument -Document $document 
+                }
+                'image' { 
+                    Add-ImageToDocument -Document $document -ImagePath $element.Path -Caption $element.Caption -Config $Config 
+                }
+                'table' { 
+                    Add-WordTable -Document $document -Rows $element.tableInfo.Rows -ColumnCount $element.tableInfo.MaxColumns  -Config $Config -Caption $element.Caption -Attributes $element.Attributes 
+                }
+                default { 
+                    Append-TextParagraph -Document $document -Text ('[未対応要素: ' + $element.Type + ']') -StyleConfig $Config.Styles.Body | Out-Null 
+                }
+            }
+            if ($element.Type -ne 'pagebreak') { 
+                $script:pageBreaked = $false
+            }
+        }
+
+        if (-not $tocInserted -and $hasTitlePage) {
+            Add-PageBreakToDocument -Document $document
+            Add-TableOfContents -Document $document -Config $Config
+            Add-PageBreakToDocument -Document $document
+            $tocInserted = $true
+        }
+
+        if (-not $ownerInserted -and $metadata.Author) {
+            Append-TextParagraph -Document $document -Text $metadata.Author -StyleConfig $Config.Styles.Owner | Out-Null
+        }
+
+        Set-HeaderFooter -Document $document -Config $Config -Metadata $metadata
+
+        try {
+            foreach ($toc in $document.TablesOfContents) {
+                $toc.Update() | Out-Null
+            }
+        }
+        catch {
+        }
+
+        $absoluteOutput = Get-AbsolutePath -Path $OutputFullPath
+        $outputDir = Split-Path -Parent $absoluteOutput
+        if (-not (Test-Path $outputDir)) {
+            [void](New-Item -ItemType Directory -Path $outputDir -Force)
+        }
+
+        $document.SaveAs([ref]$absoluteOutput, [ref](Get-WordConstant 'wdSaveFormatDocumentDefault'))
+        $document.Close()
+        $word.Quit()
+    }
+    finally {
+        if ($document -ne $null) {
+            try { [System.Runtime.InteropServices.Marshal]::ReleaseComObject($document) | Out-Null } catch {}
+        }
+        if ($word -ne $null) {
+            try { [System.Runtime.InteropServices.Marshal]::ReleaseComObject($word) | Out-Null } catch {}
+        }
+        [GC]::Collect()
+        [GC]::WaitForPendingFinalizers()
+    }
+}
+
+try {
+    $inputFullPath = Get-AbsolutePath -Path $AdocFullPath
+    $configFullPath = Get-AbsolutePath -Path $ConfigFullPath
+    $config = Load-JsonConfig -Path $configFullPath
+
+    $visited = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    $attributes = @{}
+    $parsed = Parse-AsciiDocFile -Path $inputFullPath -Attributes $attributes -Visited $visited -Config $config
+    $TIMESTAMP = Get-Date -Format "yyyy/MM/dd HH:mm:ss"
+    Write-Output "$TIMESTAMP AsciiDocのパースに成功しました"
+
+    Build-WordDocument -Parsed $parsed -Config $config -OutputFullPath $OutputFullPath
+    $TIMESTAMP = Get-Date -Format "yyyy/MM/dd HH:mm:ss"
+    Write-Output "$TIMESTAMP 変換が完了しました: $OutputFullPath"
+}
+catch {
+    $message = if ($_.Exception) { $_.Exception.Message } else { [string]$_ }
+    Write-Output "致命的エラー: $($_.Exception.Message)"
+    Write-Output "発生箇所: $($_.InvocationInfo.PositionMessage)"    
+    exit 1
+}
