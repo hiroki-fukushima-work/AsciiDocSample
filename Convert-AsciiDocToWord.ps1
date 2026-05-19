@@ -7,7 +7,7 @@ param(
 
     [string]$AdocFullPath  = 'C:\Users\hrfukusi\FUJISOFT INCORPORATED\ランディス様_AMI監視案件 - JP1設定\JP1関連資料\JP1Description.adoc',
     [string]$OutputFullPath = 'C:\Users\hrfukusi\FUJISOFT INCORPORATED\ランディス様_AMI監視案件 - JP1設定\JP1関連資料\out\JP1Description.docx',
-    [string]$ConfigFullPath = 'C:\Users\hrfukusi\FUJISOFT INCORPORATED\ランディス様_AMI監視案件 - JP1設定\JP1関連資料\word-style.sample.json'
+    [string]$ConfigFullPath = 'C:\Users\hrfukusi\FUJISOFT INCORPORATED\ランディス様_AMI監視案件 - JP1設定\JP1関連資料\conf\word-style.sample.json'
 )
 
 function Resolve-PathFromScript {
@@ -1010,6 +1010,16 @@ function Add-WordTable {
         }
     }
 
+    $autoNumber = $false
+    if ($Attributes -and
+        $Attributes.ContainsKey('options')) {
+
+        $opt = [string]$Attributes['options']
+
+        if ($opt -match 'autonumber') {
+            $autoNumber = $true
+        }
+    }
     if ($Caption) {
         Append-TextParagraph -Document $Document -Text $Caption -StyleConfig $Config.Styles.TableCaption | Out-Null
     }
@@ -1078,6 +1088,16 @@ function Add-WordTable {
             $cell = $grid[$key]
 
             $text = [string]$cell.Text
+            # options="autonumber" の場合、1列目に自動連番を設定する
+            # ヘッダー行がある場合は2行目から 1,2,3...
+            if ($autoNumber -and $c -eq 0) {
+                if (-not ($hasHeader -and $r -eq 0)) {
+                    if ([string]::IsNullOrWhiteSpace($text)) {
+                        $startRow = if ($hasHeader) { 1 } else { 0 }
+                        $text = [string]($r - $startRow + 1)
+                    }
+                }
+            }            
             $text = $text -replace '\\n', "`r`n"
             $cellRange.Range.Text = $text
 
@@ -1258,17 +1278,59 @@ function Parse-AsciiDocAttributeList {
     $result = @{}
     if ([string]::IsNullOrWhiteSpace($Text)) { return $result }
 
-    $segments = [regex]::Split($Text, '\s*,\s*')
+    $segments = New-Object System.Collections.Generic.List[string]
+    $current = New-Object System.Text.StringBuilder
+    $inQuote = $false
+    $quoteChar = ''
+
+    for ($i = 0; $i -lt $Text.Length; $i++) {
+        $ch = $Text[$i]
+
+        if (($ch -eq '"' -or $ch -eq "'") -and ($i -eq 0 -or $Text[$i - 1] -ne '\')) {
+            if (-not $inQuote) {
+                $inQuote = $true
+                $quoteChar = $ch
+            }
+            elseif ($quoteChar -eq $ch) {
+                $inQuote = $false
+                $quoteChar = ''
+            }
+
+            [void]$current.Append($ch)
+            continue
+        }
+
+        if ($ch -eq ',' -and -not $inQuote) {
+            $segments.Add($current.ToString().Trim())
+            [void]$current.Clear()
+            continue
+        }
+
+        [void]$current.Append($ch)
+    }
+
+    if ($current.Length -gt 0) {
+        $segments.Add($current.ToString().Trim())
+    }
+
     foreach ($segment in $segments) {
         if ([string]::IsNullOrWhiteSpace($segment)) { continue }
+
         if ($segment -match '^(?<key>[A-Za-z0-9_\-]+)\s*=\s*"(?<value>.*)"$') {
             $result[$matches['key']] = $matches['value']
             continue
         }
+
+        if ($segment -match "^(?<key>[A-Za-z0-9_\-]+)\s*=\s*'(?<value>.*)'$") {
+            $result[$matches['key']] = $matches['value']
+            continue
+        }
+
         if ($segment -match '^(?<key>[A-Za-z0-9_\-]+)\s*=\s*(?<value>.+)$') {
             $result[$matches['key']] = $matches['value']
             continue
         }
+
         $index = $result.Count
         $result[[string]$index] = $segment
     }

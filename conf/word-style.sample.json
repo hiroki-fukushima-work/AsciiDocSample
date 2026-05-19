@@ -184,12 +184,16 @@
       "TIP": "E2EFDA"
     },
     "Code": {
-      "FontName": "Consolas",
-      "Size": 9.5,
+      "FontName": "Cascadia Code",
+      "Size": 9,
       "Bold": false,
+      "Color": 0,
+      "BackgroundColor": "F3F3F3",
+      "LeftIndent": 12,
+      "SpaceBefore": 6,
       "SpaceAfter": 6,
       "LineSpacingRule": "Exactly",
-      "LineSpacing": 10
+      "LineSpacing": 11
     },
     "TableCaption": {
       "FontName": "游ゴシック",
