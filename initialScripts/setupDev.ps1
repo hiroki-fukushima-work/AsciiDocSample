@@ -225,7 +225,16 @@ function Install-Apps-With-WinGet {
         }
 
         # 3) ここまで来たら「未インストール」とみなして install へ
-        Write-Log INFO ("[{0}/{1}] not-installed, go install: {2}" -f $index, $total, $name)
+        #Write-Log INFO ("[{0}/{1}] not-installed, go install: {2}" -f $index, $total, $name)
+        
+		& winget list --id $id --exact @sourceArg @WG_ACCEPT @WG_NONINT | Out-Null
+		$listCode = $LASTEXITCODE
+
+		if ($listCode -eq 0) {
+		    Write-Log INFO ("[{0}/{1}] detected=installed: {2} -> skip" -f $index, $total, $name)
+		    continue
+		}
+        
 
         # --- install 実行前ログ ---
         $args = @('install','--id',$id,'--exact') + $WG_SILENT + $WG_ACCEPT + $WG_NONINT + $scopeArg + $proxyArg + $sourceArg + $wgLogArg
@@ -342,15 +351,15 @@ if (-not (Ensure-WinGet)) {
 $AppMap = @{
     '7-Zip'                    = '7zip.7zip'
     'Eclipse Temurin 17'       = 'EclipseAdoptium.Temurin.17.JDK'   # Java 17
-    'Python 3'                 = 'Python.Python.3'
-    'Ruby'                     = 'RubyInstallerTeam.Ruby'
+    'Python 3'                 = 'Python.Python.3.13'
+    'Ruby'                     = 'RubyInstallerTeam.RubyWithDevKit.3.4'
     'Strawberry Perl'          = 'StrawberryPerl.StrawberryPerl'
     'Git'                      = 'Git.Git'
     'TortoiseGit'              = 'TortoiseGit.TortoiseGit'
     'Graphviz'                 = 'Graphviz.Graphviz'
     'Visual Studio Code'       = 'Microsoft.VisualStudioCode'        # scope 指定なし（デフォルト）
     'WinMerge'                 = 'WinMerge.WinMerge'
-    'Tera Term'                = 'TeraTermProject.TeraTerm'
+    'Tera Term'                = 'TeraTermProject.teraterm'
     'CMake'                    = 'Kitware.CMake'
     'VS 2022 Build Tools'      = 'Microsoft.VisualStudio.2022.BuildTools'
     'draw.io Desktop'          = 'JGraph.Draw'
