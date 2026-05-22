@@ -751,7 +751,40 @@ function Add-CoverPage {
 
     $titleBox.Fill.Visible = $false
     $titleBox.Line.Visible = $true
+    # 作成者情報をタイトル枠の右下に配置
+    if ($Metadata.Author) {
 
+        $authorWidth  = $app.MillimetersToPoints(70)
+        $authorHeight = $app.MillimetersToPoints(25)
+
+        $authorLeft = $boxLeft + $boxWidth - $authorWidth
+        $authorTop  = $boxTop + $boxHeight + $app.MillimetersToPoints(5)
+
+        $authorBox = $Document.Shapes.AddTextbox(
+            1,
+            $authorLeft,
+            $authorTop,
+            $authorWidth,
+            $authorHeight
+        )
+
+        $authorBox.Line.Visible = $false
+        $authorBox.Fill.Visible = $false
+
+        $authorBox.TextFrame.MarginTop    = 0
+        $authorBox.TextFrame.MarginBottom = 0
+        $authorBox.TextFrame.MarginLeft   = 0
+        $authorBox.TextFrame.MarginRight  = 0
+
+        $authorRange = $authorBox.TextFrame.TextRange
+        $authorRange.Text = $Metadata.Author
+
+        Apply-FontStyle -Range $authorRange -StyleConfig $Config.Styles.Owner
+        Apply-ParagraphStyle -Range $authorRange -StyleConfig $Config.Styles.Owner
+
+        $authorRange.ParagraphFormat.Alignment = 2  # 右寄せ
+    }
+    
     $textRange = $titleBox.TextFrame.TextRange
     $textRange.Text = $Metadata.Title + "`r" + $Metadata.Subtitle
 
@@ -904,85 +937,128 @@ function Add-TableOfContents {
     [void]$range.InsertParagraphAfter()
 }
 
+function Get-ColumnCountFromColsAttribute {
+    param(
+        [hashtable]$Attributes
+    )
+
+    if (-not $Attributes -or -not $Attributes.ContainsKey('cols')) {
+        return 0
+    }
+
+    $cols = [string]$Attributes['cols']
+
+    if ([string]::IsNullOrWhiteSpace($cols)) {
+        return 0
+    }
+
+    $parts = $cols -split '\s*,\s*'
+    return $parts.Count
+}
+
 function Convert-TableRows {
-    param([string[]]$Lines)
+    param(
+        [string[]]$Lines,
+        [int]$ExpectedColumns = 0
+    )
 
-    $rows        = @()
-    $maxColumns  = 0
+    $rows = @()
+    $maxColumns = 0
+    $currentRow = @()
+    $currentCols = 0
 
-    $block = @()
+    function Get-TableCellsFromLine {
+        param([string]$Line)
 
-    function Flush-Block {
-        param([ref]$block, [ref]$rows, [ref]$maxColumns)
+        $cells = @()
 
-        if ($block.Value.Count -eq 0) { return }
+        # |セル1|セル2|セル3 のような1行複数セルに対応
+        $pattern = '(?<rs>\d+\.?)?(?<cs>\d+\+)?(?<header>h)?\|(?<text>[^|]*)'
 
-        $cells     = @()
-        $usedCols  = 0
+        foreach ($m in [regex]::Matches($Line, $pattern)) {
+            if (-not $m.Success) { continue }
 
-        foreach ($line in $block.Value) {
-            $pattern = '(?<rs>\d+\.?)?(?<cs>\d+\+)?(?<header>h)?\|(?<text>[^\|]*)'
+            $rowSpan = 1
+            if ($m.Groups['rs'].Success -and $m.Groups['rs'].Value) {
+                $rowSpan = [int]($m.Groups['rs'].Value -replace '\.', '')
+            }
 
-            foreach ($m in [regex]::Matches($line, $pattern)) {
-                if (-not $m.Groups['text'].Success) { continue }
+            $colSpan = 1
+            if ($m.Groups['cs'].Success -and $m.Groups['cs'].Value) {
+                $colSpan = [int]($m.Groups['cs'].Value -replace '\+', '')
+            }
 
-                # RowSpan
-                $rowSpan = 1
-                if ($m.Groups['rs'].Success -and $m.Groups['rs'].Value) {
-                    $rowSpan = [int]($m.Groups['rs'].Value -replace '\.', '')
-                }
-
-                # ColSpan
-                $colSpan = 1
-                if ($m.Groups['cs'].Success -and $m.Groups['cs'].Value) {
-                    $colSpan = [int]($m.Groups['cs'].Value -replace '\+', '')
-                }
-
-                $cells += @{
-                    Text     = $m.Groups['text'].Value.Trim()
-                    RowSpan  = $rowSpan
-                    ColSpan  = $colSpan
-                    IsHeader = ($m.Groups['header'].Value -eq 'h')
-                }
-
-                $usedCols += $colSpan
+            $cells += @{
+                Text     = $m.Groups['text'].Value.TrimEnd()
+                RowSpan  = $rowSpan
+                ColSpan  = $colSpan
+                IsHeader = ($m.Groups['header'].Value -eq 'h')
             }
         }
 
-        if ($usedCols -gt $maxColumns.Value) {
-            $maxColumns.Value = $usedCols
-        }
-
-        if ($cells.Count -gt 0) {
-            $rows.Value += ,$cells
-        }
-
-        $block.Value = @()
+        return $cells
     }
 
-    $isBlock = $false
+    function Flush-CurrentRow {
+        param(
+            [ref]$Rows,
+            [ref]$CurrentRow,
+            [ref]$CurrentCols,
+            [ref]$MaxColumns
+        )
+
+        if ($CurrentRow.Value.Count -eq 0) {
+            return
+        }
+
+        $Rows.Value += ,$CurrentRow.Value
+
+        if ($CurrentCols.Value -gt $MaxColumns.Value) {
+            $MaxColumns.Value = $CurrentCols.Value
+        }
+
+        $CurrentRow.Value = @()
+        $CurrentCols.Value = 0
+    }
+
     foreach ($line in $Lines) {
-        if ($line.Trim()) {
-            # 空行じゃない
-            $block += $line
-            if (-not $isBlock) {
-                Flush-Block -block ([ref]$block) -rows ([ref]$rows) -maxColumns ([ref]$maxColumns)
-            }
+        $trimmed = ([string]$line).Trim()
+
+        if ([string]::IsNullOrWhiteSpace($trimmed)) {
+            Flush-CurrentRow `
+                -Rows ([ref]$rows) `
+                -CurrentRow ([ref]$currentRow) `
+                -CurrentCols ([ref]$currentCols) `
+                -MaxColumns ([ref]$maxColumns)
+            continue
         }
-        else {
-            # 空行
-            if ($isBlock) {
-                Flush-Block -block ([ref]$block) -rows ([ref]$rows) -maxColumns ([ref]$maxColumns)
+
+        $cells = Get-TableCellsFromLine -Line $trimmed
+
+        foreach ($cell in $cells) {
+            $currentRow += $cell
+            $currentCols += [int]$cell.ColSpan
+
+            if ($ExpectedColumns -gt 0 -and $currentCols -ge $ExpectedColumns) {
+                Flush-CurrentRow `
+                    -Rows ([ref]$rows) `
+                    -CurrentRow ([ref]$currentRow) `
+                    -CurrentCols ([ref]$currentCols) `
+                    -MaxColumns ([ref]$maxColumns)
             }
-            $isBlock = -not $isBlock
         }
     }
 
-    if ($isBlock) {
-        Flush-Block -block ([ref]$block) -rows ([ref]$rows) -maxColumns ([ref]$maxColumns)
+    Flush-CurrentRow `
+        -Rows ([ref]$rows) `
+        -CurrentRow ([ref]$currentRow) `
+        -CurrentCols ([ref]$currentCols) `
+        -MaxColumns ([ref]$maxColumns)
+
+    if ($ExpectedColumns -gt 0) {
+        $maxColumns = $ExpectedColumns
     }
 
-    # ★ 列数も一緒に返す
     return [pscustomobject]@{
         Rows       = $rows
         MaxColumns = $maxColumns
@@ -1799,12 +1875,14 @@ function Parse-AsciiDocFile {
                 #Write-Output "Table $tTrim"
                 if ($tTrim -match '^\|={3,}$') { break }
                 # 空行は捨てる
-                if ($tTrim) {
+                #if ($tTrim) {
                     $tableLines.Add($tLine)
-                }
+                #}
                 $lineIndex++
             }
-            $tableInfo = Convert-TableRows -Lines $tableLines
+            $expectedColumns = Get-ColumnCountFromColsAttribute -Attributes $pendingBlockAttributes
+            $tableInfo = Convert-TableRows -Lines $tableLines -ExpectedColumns $expectedColumns
+
             $elements.Add((New-Element -Type 'table' -Data @{ tableInfo = $tableInfo; Caption = $pendingCaption; Attributes = $pendingBlockAttributes }))
             $pendingCaption = $null
             $pendingBlockAttributes = $null
@@ -2151,10 +2229,6 @@ function Build-WordDocument {
             Add-TableOfContents -Document $document -Config $Config
             Add-PageBreakToDocument -Document $document
             $tocInserted = $true
-        }
-
-        if (-not $ownerInserted -and $metadata.Author) {
-            Append-TextParagraph -Document $document -Text $metadata.Author -StyleConfig $Config.Styles.Owner | Out-Null
         }
 
         Set-HeaderFooter -Document $document -Config $Config -Metadata $metadata

@@ -20,6 +20,12 @@ powershell -NoProfile -ExecutionPolicy Bypass ^
   -OutputFullPath "%ADOCBASEPATH%out\%ADOC_NAME%.docx" ^
   -ConfigFullPath "%ADOCBASEPATH%conf/word-style.sample.json"
 
+powershell -NoProfile -ExecutionPolicy Bypass ^
+  -File "%SCRIPTBASEPATH%\Convert-AsciiDocToWord.ps1" ^
+  -AdocFullPath "%ADOCBASEPATH%AsciiDocToWord.adoc" ^
+  -OutputFullPath "%ADOCBASEPATH%out\AsciiDocToWord.docx" ^
+  -ConfigFullPath "%ADOCBASEPATH%conf/word-style.sample.json"
+
 echo FINISH %ADOC_NAME% Word Convert
 endlocal
 pause
