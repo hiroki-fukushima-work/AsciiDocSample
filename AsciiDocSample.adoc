@@ -81,22 +81,21 @@ TEL：000-0000-0000
   このメモを書いた時には2.7.0のWITHOUT DEVKITをインストールしました
 
 ==== PLANTUML関連のインストール
-    ASCIIDOCの場合インストールしなくてもいいみたい +
-    あとでgemでasciidoctor-diagramを入れるのでそこで解決されるようです。 +
-    うまくいかない場合はここにある物をインストールしてパスを通せば動くと思います。
+  ASCIIDOCの場合インストールしなくてもいいみたい +
+  あとでgemでasciidoctor-diagramを入れるのでそこで解決されるようです。 +
+  うまくいかない場合はここにある物をインストールしてパスを通せば動くと思います。
 
-    . Java8をインストールする +
-        https://www.java.com/ja/download/manual.jsp +
-        ここからインストーラーをダウンロードしてインストールしてください  
+  . Java8をインストールする +
+    https://www.java.com/ja/download/manual.jsp +
+    ここからインストーラーをダウンロードしてインストールしてください  
 
-    . PLANTUMLをインストールする +
-        http://plantuml.com/download +
-        ここからインストーラーをダウンロードしてインストールしてください  
+  . PLANTUMLをインストールする +
+    http://plantuml.com/download +
+    ここからインストーラーをダウンロードしてインストールしてください  
 
-
-    . Graphvizをインストールする +
-        http://www.graphviz.org/Download_windows.php +
-        ここからインストーラーをダウンロードしてインストールしてください  
+  . Graphvizをインストールする +
+    http://www.graphviz.org/Download_windows.php +
+    ここからインストーラーをダウンロードしてインストールしてください  
 
 <<<
 ==== ASCIIDOCTOR関連のインストール
@@ -177,6 +176,19 @@ PDF変換時はタイトルを出力しない代わりにcover_page.docで置き
 === アンカーの確認
 サブドキュメントにアンカーを定義すると最後にincludeされたドキュメントのアンカーに飛びます <<subdoca>> +
 普通のアンカー <<table_sec>>
+
+<<<
+=== Draw.ioの図を埋め込むには？ ★★★独自拡張★★★
+システム構成図などをDraw.ioで書いて埋め込むことが出来ます
+
+* Draw.ioサンプルコード
+
+```
+[drawio,generated-image-format="svg",file="drawio/サンプル.drawio",caption="サンプル構成図"]
+```
+
+[drawio,generated-image-format="svg",file="drawio/サンプル.drawio",caption="サンプル構成図"]
+
 
 === シーケンス図を埋め込むには？
 以下のようなコードをadocファイルに埋め込んでおくと、UMLの画像に変換して取り込んでくれます。

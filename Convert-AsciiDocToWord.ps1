@@ -1526,6 +1526,114 @@ function Invoke-PlantUmlRender {
     return [pscustomobject]$result
 }
 
+function Invoke-DrawIoRender {
+    param(
+        [string]$SourceFilePath,
+        [hashtable]$Options,
+        $Config
+    )
+
+    $result = @{
+        Success = $false
+        ImagePath = $null
+        ErrorMessage = $null
+        Format = $null
+    }
+
+    if (-not $Config.DrawIo -or -not [bool]$Config.DrawIo.Enabled) {
+        $result.ErrorMessage = 'draw.io が設定で無効化されています。'
+        return [pscustomobject]$result
+    }
+
+    if (-not $Options -or -not $Options.ContainsKey('file')) {
+        $result.ErrorMessage = '[drawio] に file 属性がありません。'
+        return [pscustomobject]$result
+    }
+
+    $sourceDir = Split-Path -Parent $SourceFilePath
+    $drawioPath = Get-AbsolutePath -Path ([string]$Options['file']) -BaseDirectory $sourceDir
+
+    if (-not (Test-Path -LiteralPath $drawioPath)) {
+        $result.ErrorMessage = "draw.io ファイルが見つかりません: $drawioPath"
+        return [pscustomobject]$result
+    }
+
+    $format = 'svg'
+    if ($Options.ContainsKey('generated-image-format')) {
+        $format = [string]$Options['generated-image-format']
+    }
+    elseif ($Options.ContainsKey('format')) {
+        $format = [string]$Options['format']
+    }
+    elseif ($Config.DrawIo.DefaultFormat) {
+        $format = [string]$Config.DrawIo.DefaultFormat
+    }
+
+    $format = $format.ToLowerInvariant()
+    $result.Format = $format
+
+    $cliPath = [string]$Config.DrawIo.CliPath
+    if ([string]::IsNullOrWhiteSpace($cliPath) -or -not (Test-Path -LiteralPath $cliPath)) {
+        $result.ErrorMessage = "draw.io CLI が見つかりません: $cliPath"
+        return [pscustomobject]$result
+    }
+
+    $outputRoot = if ($Config.DrawIo.OutputDir) { [string]$Config.DrawIo.OutputDir } else { '.\generated-images' }
+    $outputDir = Get-AbsolutePath -Path $outputRoot -BaseDirectory $sourceDir
+
+    if (-not (Test-Path -LiteralPath $outputDir)) {
+        [void](New-Item -ItemType Directory -Path $outputDir -Force)
+    }
+
+    $baseName = [System.IO.Path]::GetFileNameWithoutExtension($drawioPath)
+    $outputPath = Join-Path $outputDir ($baseName + '.' + $format)
+
+    if (Test-Path -LiteralPath $outputPath) {
+        Remove-Item -LiteralPath $outputPath -Force
+    }
+
+    $arguments = @(
+        '--export',
+        $drawioPath,
+        '--output',
+        $outputPath,
+        '--format',
+        $format
+    )
+
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = $cliPath
+    $psi.UseShellExecute = $false
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    $psi.CreateNoWindow = $true
+    $psi.Arguments = Join-CommandLineArguments -Arguments $arguments
+
+    $process = [System.Diagnostics.Process]::Start($psi)
+    $stdOut = $process.StandardOutput.ReadToEnd()
+    $stdErr = $process.StandardError.ReadToEnd()
+    $process.WaitForExit()
+
+    if ($process.ExitCode -ne 0) {
+        $message = ($stdErr, $stdOut | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }) -join ' '
+        if ([string]::IsNullOrWhiteSpace($message)) {
+            $message = 'draw.io 変換エラー'
+        }
+
+        $result.ErrorMessage = $message.Trim()
+        return [pscustomobject]$result
+    }
+
+    if (-not (Test-Path -LiteralPath $outputPath)) {
+        $result.ErrorMessage = "draw.io 画像が生成されませんでした: $outputPath"
+        return [pscustomobject]$result
+    }
+
+    $result.Success = $true
+    $result.ImagePath = $outputPath
+    return [pscustomobject]$result
+}
+
 function Get-NextNonEmptyTrimmedLine {
     param(
         [string[]]$Lines,
@@ -1562,9 +1670,11 @@ function Parse-AsciiDocFile {
 
     $fileDir = Split-Path -Parent $absolutePath
     $text = Get-Content -LiteralPath $absolutePath -Encoding UTF8 -Raw
-    $text = $text -replace ' \+\r\n', "`n"
-    Set-Content -LiteralPath "c:\\work\\asciidoc.txt" -Value $text -Encoding UTF8 
-    $lines = $text -split "\r\n"
+    # 改行コード統一
+    $text = $text -replace "`r`n", "`n"
+    $text = $text -replace "`r", "`n"
+
+    $lines = $text -split "`n", -1
 
     $elements = New-Object System.Collections.Generic.List[object]
     $metadata = @{
@@ -1825,6 +1935,40 @@ function Parse-AsciiDocFile {
                 $lineIndex++
                 continue
             }
+
+            if ($attrList.Values -contains 'drawio' -or $inside -match '^drawio(?:,|$)') {
+                Flush-ParagraphBuffer
+
+                $caption = $pendingCaption
+                if ($attrList.ContainsKey('caption')) {
+                    $caption = [string]$attrList['caption']
+                }
+
+                $render = Invoke-DrawIoRender `
+                    -SourceFilePath $absolutePath `
+                    -Options $attrList `
+                    -Config $Config
+
+                if ($render.Success) {
+                    $elements.Add((New-Element -Type 'image' -Data @{
+                        Path = $render.ImagePath
+                        Caption = $caption
+                        GeneratedBy = 'drawio'
+                    }))
+                }
+                else {
+                    $elements.Add((New-Element -Type 'admonition' -Data @{
+                        Kind = 'WARNING'
+                        Text = "[draw.io 画像生成失敗] $($render.ErrorMessage)"
+                    }))
+                }
+
+                $pendingCaption = $null
+                $pendingBlockAttributes = $null
+                $lineIndex++
+                continue
+            }
+
             if ($attrList.Values -contains 'source' -or $inside -match '^source(?:,|$)') {
                 $pendingBlockType = 'source'
                 $pendingBlockAttributes = $attrList
@@ -1924,11 +2068,20 @@ function Parse-AsciiDocFile {
             while (($lineIndex + 1) -lt $lines.Count -and
                 ([string]$lines[$lineIndex]).Trim() -eq '+') {
 
+                $nextTrimmed = ([string]$lines[$lineIndex + 1]).Trim()
+
+                if ($nextTrimmed -eq '```' -or
+                    $nextTrimmed -eq '----' -or
+                    $nextTrimmed -eq '....' -or
+                    $nextTrimmed -match '^\|={3,}$' -or
+                    $nextTrimmed -match '^image::') {
+                    break
+                }
+
                 $continueLine = [string]$lines[$lineIndex + 1]
                 $continueText = Normalize-InlineText -Text $continueLine -Attributes $Attributes
 
                 if (-not [string]::IsNullOrWhiteSpace($continueText)) {
-                    # Word の Shift + Enter
                     $text = $text + [char]11 + $continueText
                 }
 
@@ -1951,6 +2104,28 @@ function Parse-AsciiDocFile {
         }
 
         if ($trimmed -match '^\[\[([^\]]+)\]\]$') {
+            $lineIndex++
+            continue
+        }
+
+        if ($trimmed -eq '+') {
+            $nextTrimmed = Get-NextNonEmptyTrimmedLine -Lines $lines -StartIndex ($lineIndex + 1)
+
+            if ($nextTrimmed -eq '```' -or
+                $nextTrimmed -eq '----' -or
+                $nextTrimmed -eq '....' -or
+                $nextTrimmed -match '^\|={3,}$' -or
+                $nextTrimmed -match '^image::') {
+
+                $elements.Add((New-Element -Type 'continuation' -Data @{}))
+                $lineIndex++
+                continue
+            }
+
+            if ($paragraphBuffer.Count -gt 0) {
+                $paragraphBuffer.Add('__LINEBREAK__')
+            }
+
             $lineIndex++
             continue
         }
@@ -2061,6 +2236,7 @@ function Build-WordDocument {
         $hasTitlePage = $false
         $tocInserted = $false
         $script:pageBreaked = $false
+        $insideListContinuation = $false
         foreach ($element in $Parsed.Elements) {
             if (-not $tocInserted -and $hasTitlePage -and $element.Type -ne 'title') {
                 Add-PageBreakToDocument -Document $document
@@ -2075,12 +2251,14 @@ function Build-WordDocument {
 
             switch ($element.Type) {
 
-                'heading'   { $resetList = $true }
-                'paragraph' { $resetList = $true }
-                'pagebreak' { $resetList = $true }
-                'title'     { $resetList = $true }
+                'heading'    { $resetList = $true }
+                #'pagebreak'  { $resetList = $true }
+                'title'      { $resetList = $true }
+                #'admonition' { $resetList = $true }
+                #'table'      { $resetList = $true }
+                #'image'      { $resetList = $true }
 
-                default     { $resetList = $false }
+                default      { $resetList = $false }
             }
 
             if ($resetList) {
@@ -2132,8 +2310,25 @@ function Build-WordDocument {
                     Append-HeadingParagraph -Document $document -Text $headingText -Level $level -StyleConfig $styleConfig | Out-Null
                 
                 }
-                'paragraph' { 
-                    Append-TextParagraph -Document $document -Text $element.Text -StyleConfig $Config.Styles.Body | Out-Null 
+                'paragraph' {
+                    $style = $Config.Styles.Body
+
+                    if ($currentListLevel -gt 0) {
+                        $style = $style.PSObject.Copy()
+                        $leftIndent = 18 + (($currentListLevel - 1) * 18)
+
+                        if ($style.PSObject.Properties.Name -contains 'LeftIndent') {
+                            $style.LeftIndent = $leftIndent
+                        }
+                        else {
+                            $style | Add-Member -NotePropertyName LeftIndent -NotePropertyValue $leftIndent
+                        }
+                    }
+
+                    Append-TextParagraph `
+                        -Document $document `
+                        -Text $element.Text `
+                        -StyleConfig $style | Out-Null
                 }
                 'bullet' {
                     $level = [int]$element.Level
@@ -2196,15 +2391,29 @@ function Build-WordDocument {
                 'code' {
                     $style = $Config.Styles.Code
 
-                    if ($currentListLevel -gt 0) {
+                    if (($insideListContinuation -or $currentListLevel -gt 0) -and $currentListLevel -gt 0) {
                         $style = $style.PSObject.Copy()
-                        $style.LeftIndent = 18 + (($currentListLevel - 1) * 18)
+                        $leftIndent = 36 + (($currentListLevel - 1) * 18)
+                        if ($style.PSObject.Properties.Name -contains 'LeftIndent') {
+                            $style.LeftIndent = $leftIndent
+                        }
+                        else {
+                            $style | Add-Member -NotePropertyName LeftIndent -NotePropertyValue $leftIndent
+                        }
                     }
 
-                    Append-TextParagraph `
-                        -Document $document `
-                        -Text $element.Text `
-                        -StyleConfig $style | Out-Null
+                    $codeText = [string]$element.Text
+                    $codeLines = $codeText -split "`r?`n", -1
+
+                    foreach ($codeLine in $codeLines) {
+                        Append-TextParagraph `
+                            -Document $document `
+                            -Text $codeLine `
+                            -StyleConfig $style | Out-Null
+                    }
+
+                    Append-BlankParagraph -Document $document
+                    $insideListContinuation = $false
                 }
                 'pagebreak' { 
                     Add-PageBreakToDocument -Document $document 
@@ -2214,6 +2423,9 @@ function Build-WordDocument {
                 }
                 'table' { 
                     Add-WordTable -Document $document -Rows $element.tableInfo.Rows -ColumnCount $element.tableInfo.MaxColumns  -Config $Config -Caption $element.Caption -Attributes $element.Attributes 
+                }
+                'continuation' {
+                    $insideListContinuation = $true
                 }
                 default { 
                     Append-TextParagraph -Document $document -Text ('[未対応要素: ' + $element.Type + ']') -StyleConfig $Config.Styles.Body | Out-Null 

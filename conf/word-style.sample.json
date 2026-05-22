@@ -40,7 +40,13 @@
     "JavaPath": "java",
     "JarPath": ".\\lib\\plantuml-1.2025.4.jar",
     "OutputDir": ".\\generated-images",
-    "DefaultFormat": "png"
+    "DefaultFormat": "svg"
+  },
+  "DrawIo": {
+    "Enabled": true,
+    "CliPath": "C:\\Program Files\\draw.io\\draw.io.exe",
+    "OutputDir": ".\\generated-images",
+    "DefaultFormat": "svg"
   },
   "Image": {
     "MaxWidthMm": 160
