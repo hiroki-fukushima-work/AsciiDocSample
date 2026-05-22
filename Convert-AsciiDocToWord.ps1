@@ -2316,6 +2316,7 @@ function Build-WordDocument {
                 }
                 'paragraph' {
                     $style = $Config.Styles.Body
+                    $text = [string]$element.Text
 
                     if ($currentListLevel -gt 0) {
                         $style = $style.PSObject.Copy()
@@ -2327,11 +2328,14 @@ function Build-WordDocument {
                         else {
                             $style | Add-Member -NotePropertyName LeftIndent -NotePropertyValue $leftIndent
                         }
+
+                        # リスト配下の継続段落だけ、AsciiDoc上の見た目インデントを除去する。
+                        $text = $text -replace '(^|[\r\n])[ \t]+', '$1'
                     }
 
                     Append-TextParagraph `
                         -Document $document `
-                        -Text $element.Text `
+                        -Text $text `
                         -StyleConfig $style | Out-Null
                 }
                 'bullet' {
