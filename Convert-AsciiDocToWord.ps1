@@ -2468,6 +2468,23 @@ function Build-WordDocument {
         }
 
         $document.SaveAs([ref]$absoluteOutput, [ref](Get-WordConstant 'wdSaveFormatDocumentDefault'))
+
+        # PDF出力
+        try {
+            $pdfPath = [System.IO.Path]::ChangeExtension($absoluteOutput, '.pdf')
+
+            # 17 = wdExportFormatPDF
+            $document.ExportAsFixedFormat(
+                $pdfPath,
+                17
+            )
+
+            Write-Output "PDF出力完了: $pdfPath"
+        }
+        catch {
+            Write-Warning "PDF出力失敗: $($_.Exception.Message)"
+        }
+
         $document.Close()
         $word.Quit()
     }
