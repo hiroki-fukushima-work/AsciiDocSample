@@ -1568,6 +1568,7 @@ function Invoke-DrawIoRender {
     elseif ($Config.DrawIo.DefaultFormat) {
         $format = [string]$Config.DrawIo.DefaultFormat
     }
+    $svgTheme='light'
 
     $format = $format.ToLowerInvariant()
     $result.Format = $format
@@ -1598,7 +1599,10 @@ function Invoke-DrawIoRender {
         '--output',
         $outputPath,
         '--format',
-        $format
+        $format ,
+        '--svg-theme',
+        $svgTheme
+        
     )
 
     $psi = New-Object System.Diagnostics.ProcessStartInfo

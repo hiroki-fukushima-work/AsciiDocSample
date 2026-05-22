@@ -46,7 +46,7 @@
     "Enabled": true,
     "CliPath": "C:\\Program Files\\draw.io\\draw.io.exe",
     "OutputDir": ".\\generated-images",
-    "DefaultFormat": "svg"
+    "DefaultFormat": "png"
   },
   "Image": {
     "MaxWidthMm": 160

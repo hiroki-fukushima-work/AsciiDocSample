@@ -180,14 +180,15 @@ PDF変換時はタイトルを出力しない代わりにcover_page.docで置き
 <<<
 === Draw.ioの図を埋め込むには？ ★★★独自拡張★★★
 システム構成図などをDraw.ioで書いて埋め込むことが出来ます
+**__現在SVGには非対応__**
 
 * Draw.ioサンプルコード
 
 ```
-[drawio,generated-image-format="svg",file="drawio/サンプル.drawio",caption="サンプル構成図"]
+[drawio,generated-image-format="png",file="drawio/サンプル.drawio",caption="サンプル構成図"]
 ```
 
-[drawio,generated-image-format="svg",file="drawio/サンプル.drawio",caption="サンプル構成図"]
+[drawio,generated-image-format="png",file="drawio/サンプル.drawio",caption="サンプル構成図"]
 
 
 === シーケンス図を埋め込むには？
