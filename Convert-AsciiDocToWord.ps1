@@ -1,13 +1,9 @@
 ﻿[CmdletBinding()]
 
 param(
-    #[string]$AdocFullPath  = 'C:\Users\hrfukusi\FUJISOFT INCORPORATED\ランディス様_AMI監視案件 - Work\ascPolingTester\manual\asciidoc\ascPolingTester.adoc',
-    #[string]$OutputFullPath = 'C:\Users\hrfukusi\FUJISOFT INCORPORATED\ランディス様_AMI監視案件 - Work\ascPolingTester\manual\asciidoc\out\ascPolingTester.docx',
-    #[string]$ConfigFullPath = 'C:\Users\hrfukusi\FUJISOFT INCORPORATED\ランディス様_AMI監視案件 - Work\ascPolingTester\manual\asciidoc\word-style.sample.json'
-
-    [string]$AdocFullPath  = 'C:\Users\hrfukusi\FUJISOFT INCORPORATED\ランディス様_AMI監視案件 - JP1設定\JP1関連資料\JP1Description.adoc',
-    [string]$OutputFullPath = 'C:\Users\hrfukusi\FUJISOFT INCORPORATED\ランディス様_AMI監視案件 - JP1設定\JP1関連資料\out\JP1Description.docx',
-    [string]$ConfigFullPath = 'C:\Users\hrfukusi\FUJISOFT INCORPORATED\ランディス様_AMI監視案件 - JP1設定\JP1関連資料\conf\word-style.sample.json'
+    [string]$AdocFullPath  = "C:\workspace\JP1設定\JP1関連資料\JP1Description.adoc",
+    [string]$OutputFullPath = "C:\workspace\JP1設定\JP1関連資料\out\JP1Description.docx",
+    [string]$ConfigFullPath = "C:\workspace\JP1設定\JP1関連資料\conf\word-style.sample.json"
 )
 
 function Resolve-PathFromScript {
@@ -1678,7 +1674,7 @@ function Parse-AsciiDocFile {
     $text = $text -replace "`r`n", "`n"
     $text = $text -replace "`r", "`n"
 
-    $lines = $text -split "`n", -1
+    $lines = @($text -split "`n")
 
     $elements = New-Object System.Collections.Generic.List[object]
     $metadata = @{
@@ -1737,12 +1733,11 @@ function Parse-AsciiDocFile {
         }
         $paragraphBuffer.Clear()
     }
-
+    
     while ($lineIndex -lt $lines.Count) {
         $line = [string]$lines[$lineIndex]
         $trimmed = $line.Trim()
         
-
         if ($inFence) {
             if ($trimmed -eq $fenceDelimiter) {
                 $blockText = ($fenceLines -join [Environment]::NewLine)
@@ -1755,11 +1750,17 @@ function Parse-AsciiDocFile {
                     else {
                         $fallback = "[PlantUML 画像生成失敗] $($render.ErrorMessage)"
                         $elements.Add((New-Element -Type 'admonition' -Data @{ Kind = 'WARNING'; Text = $fallback }))
-                        $elements.Add((New-Element -Type 'code' -Data @{ Text = $blockText }))
+                        $elements.Add((New-Element -Type 'code' -Data @{
+                            Text = $blockText
+                            Caption = $pendingCaption
+                        }))
                     }
                 }
                 else {
-                    $elements.Add((New-Element -Type 'code' -Data @{ Text = $blockText }))
+                    $elements.Add((New-Element -Type 'code' -Data @{
+                        Text = $blockText
+                        Caption = $pendingCaption
+                    }))
                 }
 
                 $fenceLines.Clear()
@@ -1885,7 +1886,7 @@ function Parse-AsciiDocFile {
             continue
         }
 
-        if ($trimmed -match '^\.(.+)$' -and -not $trimmed.StartsWith('..')) {
+        if ($trimmed -match '^\.(\S.*)$' -and -not $trimmed.StartsWith('..')) {
             $nextTrimmed = Get-NextNonEmptyTrimmedLine -Lines $lines -StartIndex ($lineIndex + 1)
 
             $isCaptionTarget = $false
@@ -1911,26 +1912,17 @@ function Parse-AsciiDocFile {
         if ($trimmed -match '^\[(.+)\]$') {
             Flush-ParagraphBuffer
             $inside = $matches[1]
-            if ($inside -match '^(NOTE|TIP|IMPORTANT|WARNING|CAUTION)$') {
-                $kind = $matches[1]
-                if ($lineIndex + 1 -lt $lines.Count -and $lines[$lineIndex + 1].Trim() -eq '====') {
-                    $lineIndex += 2
-                    $body = New-Object System.Collections.Generic.List[string]
-                    while ($lineIndex -lt $lines.Count -and $lines[$lineIndex].Trim() -ne '====') {
-                        $body.Add((Normalize-InlineText -Text $lines[$lineIndex] -Attributes $Attributes))
-                        $lineIndex++
-                    }
-                    $elements.Add((New-Element -Type 'admonition' -Data @{ Kind = $kind; Text = (($body | Where-Object { $_ }) -join ' ') }))
-                    $lineIndex++
-                    continue
-                }
-            }
+            
 
-            # 行頭 admonition（NOTE: / WARNING: など）
-            if ($line -match '^(NOTE|TIP|IMPORTANT|WARNING|CAUTION):\s*(.+)$') {
-                $elements.Add((New-Element -Type 'admonition' -Data @{ Kind = $kind; Text = (Normalize-InlineText -Text $matches[2] -Attributes $Attributes) }))
-                continue
-            }
+        if ($trimmed -match '^(NOTE|TIP|IMPORTANT|WARNING|CAUTION):\s+(.+)$') {
+            Flush-ParagraphBuffer
+            $elements.Add((New-Element -Type 'admonition' -Data @{
+                Kind = $matches[1]
+                Text = (Normalize-InlineText -Text $matches[2] -Attributes $Attributes)
+            }))
+            $lineIndex++
+            continue
+        }
 
             $attrList = Parse-AsciiDocAttributeList -Text $inside
             if ($attrList.Values -contains 'plantuml' -or $inside -match '^plantuml(?:,|$)') {
@@ -2241,6 +2233,7 @@ function Build-WordDocument {
         $tocInserted = $false
         $script:pageBreaked = $false
         $insideListContinuation = $false
+        
         foreach ($element in $Parsed.Elements) {
             if (-not $tocInserted -and $hasTitlePage -and $element.Type -ne 'title') {
                 Add-PageBreakToDocument -Document $document
@@ -2398,6 +2391,13 @@ function Build-WordDocument {
                 }
                 'code' {
                     $style = $Config.Styles.Code
+
+                    if ($element.Caption) {
+                        Append-TextParagraph `
+                            -Document $document `
+                            -Text $element.Caption `
+                            -StyleConfig $Config.Styles.CodeCaption | Out-Null
+                    }
 
                     if (($insideListContinuation -or $currentListLevel -gt 0) -and $currentListLevel -gt 0) {
                         $style = $style.PSObject.Copy()
