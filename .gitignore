@@ -1,3 +1,5 @@
 html
 pdf/images
 .asciidoctor
+/generated-images
+/*.log

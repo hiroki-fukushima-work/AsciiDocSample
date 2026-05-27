@@ -1,10 +1,18 @@
 ﻿[CmdletBinding()]
 
 param(
-    [string]$AdocFullPath  = "C:\workspace\JP1設定\JP1関連資料\JP1Description.adoc",
-    [string]$OutputFullPath = "C:\workspace\JP1設定\JP1関連資料\out\JP1Description.docx",
-    [string]$ConfigFullPath = "C:\workspace\JP1設定\JP1関連資料\conf\word-style.sample.json"
+    [string]$AdocFullPath  = "C:\Users\hrfukusi\FUJISOFT INCORPORATED\ランディス様_AMI監視案件 - Work\試験項目の作成\manual\TestCaseCreator.adoc",
+    [string]$OutputFullPath = "C:\Users\hrfukusi\FUJISOFT INCORPORATED\ランディス様_AMI監視案件 - Work\試験項目の作成\manual\out\TestCaseCreator.docx",
+    [string]$ConfigFullPath = "C:\Users\hrfukusi\FUJISOFT INCORPORATED\ランディス様_AMI監視案件 - Work\試験項目の作成\manual\conf\word-style.sample.json"
 )
+
+$script:DebugLogPath = Join-Path $PSScriptRoot 'convert-debug.log'
+Remove-Item $script:DebugLogPath -ErrorAction SilentlyContinue
+
+function Write-DebugLog {
+    param([string]$Message)
+    Add-Content -LiteralPath $script:DebugLogPath -Value $Message -Encoding UTF8
+}
 
 function Resolve-PathFromScript {
     param (
@@ -784,8 +792,8 @@ function Set-TableCellTextWithHyperlinks {
         $StyleConfig
     )
 
-    $cellTextRange = $Cell.Range
-    $cellTextRange.End = $cellTextRange.End - 1
+    $cellTextRange = $Cell.Range.Duplicate
+    $cellTextRange.MoveEnd(1, -1) | Out-Null
     $cellTextRange.Text = ''
 
     $cursor = $Document.Range($cellTextRange.Start, $cellTextRange.Start)
@@ -838,8 +846,8 @@ function Set-TableCellTextWithHyperlinks {
         $r.Text = $afterText
     }
 
-    Apply-FontStyle -Range $Cell.Range -StyleConfig $StyleConfig
-    Apply-ParagraphStyle -Range $Cell.Range -StyleConfig $StyleConfig
+    Apply-FontStyle -Range $cellTextRange -StyleConfig $StyleConfig
+    Apply-ParagraphStyle -Range $cellTextRange -StyleConfig $StyleConfig
 }
 
 function Add-CoverPage {
@@ -1194,7 +1202,16 @@ function Add-WordTable {
         [string]$Caption,
         $Attributes
     )
-    
+
+    if ($Caption) {
+       $captionParagraph =  Append-TextParagraph -Document $Document -Text $Caption -StyleConfig $Config.Styles.FigureCaption
+        try {
+            $captionParagraph.Range.ParagraphFormat.KeepWithNext = $true
+        } catch {
+            Write-DebugLog "WARN failed to set KeepWithNext for caption: $($_.Exception.Message)"
+        }
+    }
+        
     $hasHeader = $false
     if ($Attributes -and
         $Attributes.ContainsKey('options')) {
@@ -1216,9 +1233,6 @@ function Add-WordTable {
             $autoNumber = $true
         }
     }
-    if ($Caption) {
-        Append-TextParagraph -Document $Document -Text $Caption -StyleConfig $Config.Styles.TableCaption | Out-Null
-    }
 
     if (-not $Rows -or $Rows.Count -eq 0) {
         Append-TextParagraph -Document $Document -Text '[空テーブル]' -StyleConfig $Config.Styles.Body | Out-Null
@@ -1226,10 +1240,11 @@ function Add-WordTable {
     }
 
     # ----- Word テーブル作成
-    $range = $Document.Content
-    $range.Collapse((Get-WordConstant 'wdCollapseEnd'))
+    $range = $Document.Range($Document.Content.End - 1, $Document.Content.End - 1)
+
     $table = $Document.Tables.Add($range, $Rows.Count, $ColumnCount)
     $table.Borders.Enable = 1
+    $table.Rows.AllowBreakAcrossPages = $false
     try { $table.AutoFitBehavior((Get-WordConstant 'wdAutoFitContent')) | Out-Null } catch {}
 
     # ----- 論理セル配置
@@ -2016,7 +2031,10 @@ function Parse-AsciiDocFile {
         }
 
         if ($trimmed -match '^\.(\S.*)$' -and -not $trimmed.StartsWith('..')) {
+            $captionText = $matches[1]
             $nextTrimmed = Get-NextNonEmptyTrimmedLine -Lines $lines -StartIndex ($lineIndex + 1)
+
+            Write-DebugLog "CAPTION-CANDIDATE line=$lineIndex text=[$trimmed] next=[$nextTrimmed]"
 
             $isCaptionTarget = $false
             if ($nextTrimmed) {
@@ -2032,7 +2050,7 @@ function Parse-AsciiDocFile {
 
             if ($isCaptionTarget) {
                 Flush-ParagraphBuffer
-                $pendingCaption = Normalize-InlineText -Text $matches[1] -Attributes $Attributes
+                $pendingCaption = Normalize-InlineText -Text $captionText -Attributes $Attributes
                 $lineIndex++
                 continue
             }
@@ -2128,14 +2146,15 @@ function Parse-AsciiDocFile {
             $imagePath = Get-ImageFullPath -ImageReference $imageRef -CurrentFileDirectory $fileDir -Attributes $Attributes
             $elements.Add((New-Element -Type 'image' -Data @{ Path = $imagePath; Caption = $pendingCaption }))
             $pendingCaption = $null
-            $pendingBlockAttributes = $null
             $lineIndex++
             continue
         }
 
         if ($trimmed -match '^\|={3,}$') {
             Flush-ParagraphBuffer
-            #Write-Output "Table $trimmed"
+             
+            Write-DebugLog "TABLE-START line=$lineIndex pendingCaption=[$pendingCaption]"
+
             $tableLines = New-Object System.Collections.Generic.List[string]
             $lineIndex++
             while ($lineIndex -lt $lines.Count) {
@@ -2152,7 +2171,20 @@ function Parse-AsciiDocFile {
             $expectedColumns = Get-ColumnCountFromColsAttribute -Attributes $pendingBlockAttributes
             $tableInfo = Convert-TableRows -Lines $tableLines -ExpectedColumns $expectedColumns
 
-            $elements.Add((New-Element -Type 'table' -Data @{ tableInfo = $tableInfo; Caption = $pendingCaption; Attributes = $pendingBlockAttributes }))
+            if (-not [string]::IsNullOrWhiteSpace($pendingCaption)) {
+                $elements.Add((New-Element -Type 'tablecaption' -Data @{
+                    Text = $pendingCaption
+                }))
+            }
+
+            Write-DebugLog "TABLE-ADD rows=$($tableInfo.Rows.Count) cols=$($tableInfo.MaxColumns) caption=[$pendingCaption]"
+
+            $elements.Add((New-Element -Type 'table' -Data @{
+                tableInfo  = $tableInfo
+                Caption    = $null
+                Attributes = $pendingBlockAttributes
+            }))
+
             $pendingCaption = $null
             $pendingBlockAttributes = $null
             $pendingBlockType = $null
@@ -2559,11 +2591,19 @@ function Build-WordDocument {
                     Add-ImageToDocument -Document $document -ImagePath $element.Path -Caption $element.Caption -Config $Config 
                 }
                 'table' { 
+                    Write-DebugLog "BUILD-TABLE caption=[$($element.Caption)] rows=$($element.tableInfo.Rows.Count)"
+                    
                     Add-WordTable -Document $document -Rows $element.tableInfo.Rows -ColumnCount $element.tableInfo.MaxColumns  -Config $Config -Caption $element.Caption -Attributes $element.Attributes 
                 }
                 'continuation' {
                     $insideListContinuation = $true
                 }
+                'tablecaption' {
+                    Append-TextParagraph `
+                        -Document $document `
+                        -Text $element.Text `
+                        -StyleConfig $Config.Styles.TableCaption | Out-Null
+                }                
                 default { 
                     Append-TextParagraph -Document $document -Text ('[未対応要素: ' + $element.Type + ']') -StyleConfig $Config.Styles.Body | Out-Null 
                 }
