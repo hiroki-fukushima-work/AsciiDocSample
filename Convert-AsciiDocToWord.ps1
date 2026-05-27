@@ -650,7 +650,6 @@ function Append-BlankParagraph {
     
     Append-TextParagraph -Document $Document -Text '' -StyleConfig $null | Out-Null
 }
-
 function Append-TextParagraph {
     param(
         $Document,
@@ -659,34 +658,97 @@ function Append-TextParagraph {
         [switch]$NoTrailingParagraph
     )
 
-    $runs = Convert-InlineEmphasis -Text $Text
-
     $cursor = $Document.Content
     $cursor.Collapse((Get-WordConstant 'wdCollapseEnd'))
 
     $paragraphStart = $cursor.Start
     $inlineRanges = @()
 
-    foreach ($run in $runs) {
-        $runText = [string]$run.Text
-        if ([string]::IsNullOrEmpty($runText)) {
-            continue
+    # http://... / https://...
+    # http://...[表示名] / https://...[表示名]
+    $linkPattern = '(https?://[^\s\[]+)(?:\[([^\]]+)\])?'
+
+    $matches = [regex]::Matches($Text, $linkPattern)
+
+    $pos = 0
+
+    foreach ($m in $matches) {
+        # リンク前の通常テキスト
+        if ($m.Index -gt $pos) {
+            $beforeText = $Text.Substring($pos, $m.Index - $pos)
+            $runs = Convert-InlineEmphasis -Text $beforeText
+
+            foreach ($run in $runs) {
+                $runText = [string]$run.Text
+                if ([string]::IsNullOrEmpty($runText)) { continue }
+
+                $runRange = $Document.Range($cursor.End, $cursor.End)
+                $runRange.Text = $runText
+
+                $inlineRanges += [pscustomobject]@{
+                    Range  = $runRange
+                    Bold   = [bool]$run.Bold
+                    Italic = [bool]$run.Italic
+                }
+
+                $cursor.SetRange($runRange.End, $runRange.End)
+            }
         }
 
-        #
-        # ★ .Length で位置計算しない
-        # Word に挿入させた Range.End を信用する
-        #
-        $runRange = $Document.Range($cursor.End, $cursor.End)
-        $runRange.Text = $runText
+        # リンク部分
+        $url = [string]$m.Groups[1].Value
+        $label = $url
 
-        $inlineRanges += [pscustomobject]@{
-            Range  = $runRange
-            Bold   = [bool]$run.Bold
-            Italic = [bool]$run.Italic
+        if ($m.Groups.Count -ge 3 -and $m.Groups[2].Success -and
+            -not [string]::IsNullOrWhiteSpace($m.Groups[2].Value)) {
+            $label = [string]$m.Groups[2].Value
         }
 
-        $cursor.SetRange($runRange.End, $runRange.End)
+        try {
+            # 空の Range に対して Hyperlink を直接追加する。
+            # 先に Range.Text を設定すると、Word COM 側でリンク範囲が後続段落まで伸びることがある。
+            $linkRange = $Document.Range($cursor.End, $cursor.End)
+
+            $hyperlink = $Document.Hyperlinks.Add(
+                $linkRange,
+                $url,
+                '',
+                '',
+                $label
+            )
+
+            # Hyperlink 作成後の実 Range.End を使って cursor を進める
+            $cursor.SetRange($hyperlink.Range.End, $hyperlink.Range.End)
+        }
+        catch {
+            # 失敗時は通常テキストとして挿入
+            $linkRange = $Document.Range($cursor.End, $cursor.End)
+            $linkRange.Text = $label
+            $cursor.SetRange($linkRange.End, $linkRange.End)
+        }
+        $pos = $m.Index + $m.Length
+    }
+
+    # 最後の通常テキスト
+    if ($pos -lt $Text.Length) {
+        $afterText = $Text.Substring($pos)
+        $runs = Convert-InlineEmphasis -Text $afterText
+
+        foreach ($run in $runs) {
+            $runText = [string]$run.Text
+            if ([string]::IsNullOrEmpty($runText)) { continue }
+
+            $runRange = $Document.Range($cursor.End, $cursor.End)
+            $runRange.Text = $runText
+
+            $inlineRanges += [pscustomobject]@{
+                Range  = $runRange
+                Bold   = [bool]$run.Bold
+                Italic = [bool]$run.Italic
+            }
+
+            $cursor.SetRange($runRange.End, $runRange.End)
+        }
     }
 
     if (-not $NoTrailingParagraph) {
@@ -696,15 +758,11 @@ function Append-TextParagraph {
 
     $paragraphRange = $Document.Range($paragraphStart, $cursor.End)
 
-    #
-    # 段落全体にベーススタイルを1回だけ
-    #
+    # 段落全体にベーススタイルを適用
     Apply-FontStyle -Range $paragraphRange -StyleConfig $StyleConfig
     Apply-ParagraphStyle -Range $paragraphRange -StyleConfig $StyleConfig
 
-    #
-    # 後から Bold / Italic だけ上書き
-    #
+    # Bold / Italic を後から再適用
     foreach ($item in $inlineRanges) {
         if ($item.Bold) {
             $item.Range.Font.Bold = 1
@@ -716,6 +774,72 @@ function Append-TextParagraph {
     }
 
     return $paragraphRange
+}
+
+function Set-TableCellTextWithHyperlinks {
+    param(
+        $Document,
+        $Cell,
+        [string]$Text,
+        $StyleConfig
+    )
+
+    $cellTextRange = $Cell.Range
+    $cellTextRange.End = $cellTextRange.End - 1
+    $cellTextRange.Text = ''
+
+    $cursor = $Document.Range($cellTextRange.Start, $cellTextRange.Start)
+    $linkPattern = '(https?://[^\s\[]+)(?:\[([^\]]+)\])?'
+
+    $matches = [regex]::Matches($Text, $linkPattern)
+    $pos = 0
+
+    foreach ($m in $matches) {
+        if ($m.Index -gt $pos) {
+            $beforeText = $Text.Substring($pos, $m.Index - $pos)
+            $r = $Document.Range($cursor.End, $cursor.End)
+            $r.Text = $beforeText
+            $cursor.SetRange($r.End, $r.End)
+        }
+
+        $url = [string]$m.Groups[1].Value
+        $label = $url
+
+        if ($m.Groups.Count -ge 3 -and $m.Groups[2].Success -and
+            -not [string]::IsNullOrWhiteSpace($m.Groups[2].Value)) {
+            $label = [string]$m.Groups[2].Value
+        }
+
+        try {
+            $linkRange = $Document.Range($cursor.End, $cursor.End)
+
+            $hyperlink = $Document.Hyperlinks.Add(
+                $linkRange,
+                $url,
+                '',
+                '',
+                $label
+            )
+
+            $cursor.SetRange($hyperlink.Range.End, $hyperlink.Range.End)
+        }
+        catch {
+            $r = $Document.Range($cursor.End, $cursor.End)
+            $r.Text = $label
+            $cursor.SetRange($r.End, $r.End)
+        }
+
+        $pos = $m.Index + $m.Length
+    }
+
+    if ($pos -lt $Text.Length) {
+        $afterText = $Text.Substring($pos)
+        $r = $Document.Range($cursor.End, $cursor.End)
+        $r.Text = $afterText
+    }
+
+    Apply-FontStyle -Range $Cell.Range -StyleConfig $StyleConfig
+    Apply-ParagraphStyle -Range $Cell.Range -StyleConfig $StyleConfig
 }
 
 function Add-CoverPage {
@@ -1170,16 +1294,21 @@ function Add-WordTable {
                     }
                 }
             }            
-            $text = $text -replace '\\n', "`r`n"
-            $cellRange.Range.Text = $text
-
             $isHeaderCell = $cell.IsHeader -or ($hasHeader -and $r -eq 0)
 
             if ($isHeaderCell) {
-                Apply-FontStyle -Range $cellRange.Range -StyleConfig $Config.Styles.TableHeader
+                Set-TableCellTextWithHyperlinks `
+                    -Document $Document `
+                    -Cell $cellRange `
+                    -Text $text `
+                    -StyleConfig $Config.Styles.TableHeader
             }
             else {
-                Apply-FontStyle -Range $cellRange.Range -StyleConfig $Config.Styles.TableBody
+                Set-TableCellTextWithHyperlinks `
+                    -Document $Document `
+                    -Cell $cellRange `
+                    -Text $text `
+                    -StyleConfig $Config.Styles.TableBody
             }
         }
     }
