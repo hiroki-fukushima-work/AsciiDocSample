@@ -237,10 +237,13 @@ function Get-WordConstant {
         wdWord9ListBehavior = 1
         msoShapeRoundedRectangle = 5
         msoTextOrientationHorizontal = 1
-
+        wdSectionBreakNextPage = 2
+        wdFieldPage = 33
+        wdFieldSectionPages = 87
+        wdVerticalPositionRelativeToPage = 3
     }
 
-    if (-not $map.ContainsKey($Name)) {
+    if (-not $map.ContainsKey($Name)) { 
         throw "未定義のWord定数です: $Name"
     }
     return $map[$Name]
@@ -850,6 +853,55 @@ function Set-TableCellTextWithHyperlinks {
     Apply-ParagraphStyle -Range $cellTextRange -StyleConfig $StyleConfig
 }
 
+
+function Edit-CoverPage {
+    param(
+        $Document,
+        $Metadata,
+        $Config
+    )
+
+    $replaceMap = @{
+        '%%タイトル%%'     = [string]$Metadata.Title
+        '%%サブタイトル%%' = [string]$Metadata.Subtitle
+        '%%版数%%'         = [string]$Metadata.RevNumber
+        '%%改定日%%'       = [string]$Metadata.RevDate
+        '%%作成者%%'       = [string]$Metadata.Author
+        '%%著作権%%'       = [string]$Metadata.Copyright
+    }
+
+    foreach ($findText in $replaceMap.Keys) {
+
+        $replaceText = $replaceMap[$findText]
+
+        $find = $Document.Content.Find
+
+        $find.ClearFormatting()
+        $find.Replacement.ClearFormatting()
+
+        $find.Text = $findText
+        $find.Replacement.Text = $replaceText
+
+        $find.Forward = $true
+        $find.Wrap = 1
+        $find.Format = $false
+
+        $find.Execute(
+            [ref]$findText,
+            [ref]$false,
+            [ref]$false,
+            [ref]$false,
+            [ref]$false,
+            [ref]$false,
+            [ref]$true,
+            [ref]1,
+            [ref]$false,
+            [ref]$replaceText,
+            [ref]2
+        ) | Out-Null
+    }
+}
+
 function Add-CoverPage {
     param(
         $Document,
@@ -993,6 +1045,51 @@ function Add-CoverPage {
             -Range $tbl.Cell($row,2).Range `
             -StyleConfig $Config.Styles.Revision
     }
+}
+
+function Add-SectionBreakToDocument {
+    param($Document)
+
+    $range = $Document.Content
+    $range.Collapse((Get-WordConstant 'wdCollapseEnd'))
+    $range.InsertBreak((Get-WordConstant 'wdSectionBreakNextPage'))
+}
+
+function Set-BodyFooterPageNumber {
+    param($Document)
+
+    $section = $Document.Sections.Item($Document.Sections.Count)
+
+    $footer = $section.Footers.Item((Get-WordConstant 'wdHeaderFooterPrimary'))
+    $footer.LinkToPrevious = $false
+
+    $section.PageSetup.DifferentFirstPageHeaderFooter = $false
+    $footer.PageNumbers.RestartNumberingAtSection = $true
+    $footer.PageNumbers.StartingNumber = 1
+
+    $range = $footer.Range
+    $range.Text = ''
+    $range.ParagraphFormat.Alignment = 1 # center
+
+    # フッター終端文字の直前を使う
+    $range = $footer.Range
+    $range.Collapse((Get-WordConstant 'wdCollapseEnd'))
+    $range.MoveEnd(1, -1) | Out-Null
+
+    # PAGE
+    $Document.Fields.Add($range, -1, 'PAGE', $true) | Out-Null
+
+    $range = $footer.Range
+    $range.Collapse((Get-WordConstant 'wdCollapseEnd'))
+    $range.MoveEnd(1, -1) | Out-Null
+    $range.InsertAfter('/')
+
+    $range = $footer.Range
+    $range.Collapse((Get-WordConstant 'wdCollapseEnd'))
+    $range.MoveEnd(1, -1) | Out-Null
+
+    # SECTIONPAGES
+    $Document.Fields.Add($range, -1, 'SECTIONPAGES', $true) | Out-Null
 }
 
 function Add-PageBreakToDocument {
@@ -1193,6 +1290,41 @@ function Convert-TableRows {
     }
 }
 
+function Replace-WordText {
+    param(
+        $Document,
+        [string]$FindText,
+        [string]$ReplaceText
+    )
+
+    $find = $Document.Content.Find
+    $find.ClearFormatting()
+    $find.Replacement.ClearFormatting()
+
+    $find.Text = $FindText
+    $find.Replacement.Text = $ReplaceText
+    $find.Forward = $true
+    $find.Wrap = 1 # wdFindContinue
+    $find.Format = $false
+    $find.MatchCase = $false
+    $find.MatchWholeWord = $false
+    $find.MatchWildcards = $false
+
+    $find.Execute(
+        [ref]$FindText,
+        [ref]$false,
+        [ref]$false,
+        [ref]$false,
+        [ref]$false,
+        [ref]$false,
+        [ref]$true,
+        [ref]1,
+        [ref]$false,
+        [ref]$ReplaceText,
+        [ref]2
+    ) | Out-Null
+}
+
 function Add-WordTable {
     param(
         $Document,
@@ -1386,58 +1518,182 @@ function Add-ImageToDocument {
         [string]$Caption,
         $Config
     )
-    
 
+    $app = $Document.Application
+
+    # -----------------------------
+    # ① キャプション追加
+    # -----------------------------
+    $captionRange = $null
     if ($Caption) {
-        Append-TextParagraph -Document $Document -Text $Caption -StyleConfig $Config.Styles.FigureCaption | Out-Null
+        $captionRange = Append-TextParagraph `
+            -Document $Document `
+            -Text $Caption `
+            -StyleConfig $Config.Styles.FigureCaption
+
+        try {
+            $captionRange.ParagraphFormat.KeepWithNext = $true
+        } catch {}
     }
 
-    $resolvedImagePath = $ImagePath
-    try {
-        $resolvedImagePath = Get-AbsolutePath -Path $ImagePath
-    }
-    catch {
-        Append-TextParagraph -Document $Document -Text "[画像パス解決失敗: $ImagePath]" -StyleConfig $Config.Styles.Body | Out-Null
-        return
-    }
+    # -----------------------------
+    # ② 挿入位置取得
+    # -----------------------------
+    $range = $Document.Content
+    $range.Collapse(0)
 
-    if (-not (Test-Path -LiteralPath $resolvedImagePath)) {
-        Append-TextParagraph -Document $Document -Text "[画像が見つかりません: $resolvedImagePath]" -StyleConfig $Config.Styles.Body | Out-Null
-        return
-    }
+    # 現在Y位置
+    $currentY = $range.Information(3)
 
-    $ext = [System.IO.Path]::GetExtension($resolvedImagePath).ToLowerInvariant()
-    #if ($ext -eq ".svg") {
-    #    Append-TextParagraph -Document $Document -Text "[SVG は未対応のためスキップ: $resolvedImagePath]" -StyleConfig $Config.Styles.Body | Out-Null
-    #    return
-    #}
+    # ページ情報
+    $pageHeight = $Document.PageSetup.PageHeight
+    $topMargin = $Document.PageSetup.TopMargin
+    $bottomMargin = $Document.PageSetup.BottomMargin
 
-    try {
-        $range = $Document.Content
-        $range.Collapse(0)
-        $shape = $Document.InlineShapes.AddPicture($resolvedImagePath, $false, $true, $range)
-    }
-    catch {
-        Append-TextParagraph -Document $Document -Text "[画像挿入失敗: $resolvedImagePath]" -StyleConfig $Config.Styles.Body | Out-Null
-        Append-TextParagraph -Document $Document -Text ("[詳細] " + $_.Exception.Message) -StyleConfig $Config.Styles.Code | Out-Null
-        return
-    }
+    # 残り高さ
+    $remainingHeight = $pageHeight - $bottomMargin - $currentY
+
+    # -----------------------------
+    # ③ 画像挿入（仮）
+    # -----------------------------
+    $shape = $Document.InlineShapes.AddPicture($ImagePath, $false, $true, $range)
 
     try {
-        if ($Config.Image -and $Config.Image.MaxWidthMm) {
-            $points = $Document.Application.MillimetersToPoints([double]$Config.Image.MaxWidthMm)
-            if ($shape.Width -gt $points) {
+        $shape.Range.ParagraphFormat.KeepTogether = $true
+    } catch {}
+
+    # -----------------------------
+    # ④ サイズ制御（ここがガチ）
+    # -----------------------------
+    $originalWidth = $shape.Width
+    $originalHeight = $shape.Height
+
+    # 設定値（あれば）
+    $maxWidth = $null
+    if ($Config.Image.MaxWidthMm) {
+        $maxWidth = $app.MillimetersToPoints([double]$Config.Image.MaxWidthMm)
+    }
+
+    # --- 横方向制限 ---
+    if ($maxWidth -and $originalWidth -gt $maxWidth) {
+        $shape.LockAspectRatio = $true
+        $shape.Width = $maxWidth
+    }
+
+    # 再取得（縮んだ可能性）
+    $currentHeight = $shape.Height
+
+    # キャプション分を考慮（適当だが効果あり）
+    $captionReserve = 150  # pt（微調整可）
+
+    $availableHeight = $remainingHeight - $captionReserve
+
+    # -----------------------------
+    # ⑤ はみ出る場合の処理
+    # -----------------------------
+    if ($currentHeight -gt $availableHeight) {
+
+        # --- 縮小可能なら縮小 ---
+        if ($availableHeight -gt 50) {
+
+            $ratio = $availableHeight / $currentHeight
+
+            if ($ratio -lt 1.0) {
                 $shape.LockAspectRatio = $true
-                $shape.Width = $points
+                $shape.Height = $shape.Height * $ratio
             }
+
+        } else {
+            # --- どうしようもない → 改ページ ---
+            $shape.Delete()
+
+            # 改ページ
+            $range = $Document.Content
+            $range.Collapse(0)
+            $range.InsertBreak(7) # wdPageBreak
+
+            # 再挿入
+            $range = $Document.Content
+            $range.Collapse(0)
+
+            $shape = $Document.InlineShapes.AddPicture($ImagePath, $false, $true, $range)
         }
     }
-    catch {
-        Append-TextParagraph -Document $Document -Text "[画像サイズ調整失敗: $resolvedImagePath]" -StyleConfig $Config.Styles.Body | Out-Null
-    }
 
+    # -----------------------------
+    # ⑥ 後処理
+    # -----------------------------
     $Document.Content.InsertParagraphAfter() | Out-Null
 }
+
+# function Add-ImageToDocument {
+#     param(
+#         [Parameter(Mandatory=$true)]$Document,
+#         [Parameter(Mandatory=$true)][string]$ImagePath,
+#         [string]$Caption,
+#         $Config
+#     )
+    
+
+#     if ($Caption) {
+#         $captionRange = Append-TextParagraph `
+#             -Document $Document `
+#             -Text $Caption `
+#             -StyleConfig $Config.Styles.FigureCaption
+
+#         try {
+#             $captionRange.ParagraphFormat.KeepWithNext = $true
+#         } catch {}
+
+#     }
+
+#     $resolvedImagePath = $ImagePath
+#     try {
+#         $resolvedImagePath = Get-AbsolutePath -Path $ImagePath
+#     }
+#     catch {
+#         Append-TextParagraph -Document $Document -Text "[画像パス解決失敗: $ImagePath]" -StyleConfig $Config.Styles.Body | Out-Null
+#         return
+#     }
+
+#     if (-not (Test-Path -LiteralPath $resolvedImagePath)) {
+#         Append-TextParagraph -Document $Document -Text "[画像が見つかりません: $resolvedImagePath]" -StyleConfig $Config.Styles.Body | Out-Null
+#         return
+#     }
+
+#     $ext = [System.IO.Path]::GetExtension($resolvedImagePath).ToLowerInvariant()
+#     #if ($ext -eq ".svg") {
+#     #    Append-TextParagraph -Document $Document -Text "[SVG は未対応のためスキップ: $resolvedImagePath]" -StyleConfig $Config.Styles.Body | Out-Null
+#     #    return
+#     #}
+
+#     try {
+#         $range = $Document.Content
+#         $range.Collapse(0)
+#         $shape = $Document.InlineShapes.AddPicture($resolvedImagePath, $false, $true, $range)
+#         $shape.Range.ParagraphFormat.KeepTogether = $true
+#     }
+#     catch {
+#         Append-TextParagraph -Document $Document -Text "[画像挿入失敗: $resolvedImagePath]" -StyleConfig $Config.Styles.Body | Out-Null
+#         Append-TextParagraph -Document $Document -Text ("[詳細] " + $_.Exception.Message) -StyleConfig $Config.Styles.Code | Out-Null
+#         return
+#     }
+
+#     try {
+#         if ($Config.Image -and $Config.Image.MaxWidthMm) {
+#             $points = $Document.Application.MillimetersToPoints([double]$Config.Image.MaxWidthMm)
+#             if ($shape.Width -gt $points) {
+#                 $shape.LockAspectRatio = $true
+#                 $shape.Width = $points
+#             }
+#         }
+#     }
+#     catch {
+#         Append-TextParagraph -Document $Document -Text "[画像サイズ調整失敗: $resolvedImagePath]" -StyleConfig $Config.Styles.Body | Out-Null
+#     }
+
+#     $Document.Content.InsertParagraphAfter() | Out-Null
+# }
 
 function Set-HeaderFooter {
     param(
@@ -2371,14 +2627,7 @@ function Build-WordDocument {
     try {
         $word = New-Object -ComObject Word.Application
         $word.Visible = $false
-        $document = $word.Documents.Add()
-
-        if ($Config.Document -and $Config.Document.PageSetup) {
-            if ($Config.Document.PageSetup.TopMarginMm) { $document.PageSetup.TopMargin = $word.MillimetersToPoints([double]$Config.Document.PageSetup.TopMarginMm) }
-            if ($Config.Document.PageSetup.BottomMarginMm) { $document.PageSetup.BottomMargin = $word.MillimetersToPoints([double]$Config.Document.PageSetup.BottomMarginMm) }
-            if ($Config.Document.PageSetup.LeftMarginMm) { $document.PageSetup.LeftMargin = $word.MillimetersToPoints([double]$Config.Document.PageSetup.LeftMarginMm) }
-            if ($Config.Document.PageSetup.RightMarginMm) { $document.PageSetup.RightMargin = $word.MillimetersToPoints([double]$Config.Document.PageSetup.RightMarginMm) }
-        }
+        $adocDir = Split-Path -Parent $inputFullPath
 
         $metadata = [pscustomobject]@{
             Title = [string]($Parsed.Metadata.Title)
@@ -2389,6 +2638,51 @@ function Build-WordDocument {
             Copyright = [string]($Parsed.Metadata.Copyright)
         }
 
+        $usingCoverTemplate = $false
+        if ($Config.CoverPage.TemplatePath) {
+
+            #
+            # 表紙テンプレートをベース文書として開く
+            #
+            $templatePath = Get-AbsolutePath `
+                -Path $Config.CoverPage.TemplatePath `
+                -BaseDirectory $adocDir
+            $document = $word.Documents.Open($templatePath)
+
+            #
+            # プレースホルダー置換
+            #
+            Edit-CoverPage `
+                -Document $document `
+                -Metadata $metadata `
+                -Config $Config
+            
+            $usingCoverTemplate = $true
+        }
+        else {
+
+            #
+            # 新規文書
+            #
+            $document = $word.Documents.Add()
+
+            #
+            # 旧来の動的表紙生成
+            #
+            Add-CoverPage `
+                -Document $document `
+                -Config $Config `
+                -Metadata $metadata
+        }
+        $hasTitlePage = $true
+
+        if ($Config.Document -and $Config.Document.PageSetup) {
+            if ($Config.Document.PageSetup.TopMarginMm) { $document.PageSetup.TopMargin = $word.MillimetersToPoints([double]$Config.Document.PageSetup.TopMarginMm) }
+            if ($Config.Document.PageSetup.BottomMarginMm) { $document.PageSetup.BottomMargin = $word.MillimetersToPoints([double]$Config.Document.PageSetup.BottomMarginMm) }
+            if ($Config.Document.PageSetup.LeftMarginMm) { $document.PageSetup.LeftMargin = $word.MillimetersToPoints([double]$Config.Document.PageSetup.LeftMarginMm) }
+            if ($Config.Document.PageSetup.RightMarginMm) { $document.PageSetup.RightMargin = $word.MillimetersToPoints([double]$Config.Document.PageSetup.RightMarginMm) }
+        }
+
         $ownerInserted = $false
         $hasTitlePage = $false
         $tocInserted = $false
@@ -2397,10 +2691,14 @@ function Build-WordDocument {
         
         foreach ($element in $Parsed.Elements) {
             if (-not $tocInserted -and $hasTitlePage -and $element.Type -ne 'title') {
-                Add-PageBreakToDocument -Document $document
+                if (-not $usingCoverTemplate) {
+                    Add-PageBreakToDocument -Document $document
+                }
+
                 Add-TableOfContents -Document $document -Config $Config
                 $script:pageBreaked = $false
-                Add-PageBreakToDocument -Document $document
+                Add-SectionBreakToDocument -Document $document
+                Set-BodyFooterPageNumber -Document $document                
                 $tocInserted = $true
             }
 
@@ -2428,11 +2726,6 @@ function Build-WordDocument {
                 'title' {
                     
                     Set-HeaderFooter -Document $document -Config $Config -Metadata $metadata -IsCovePage $true
-
-                    Add-CoverPage `
-                        -Document $document `
-                        -Config $Config `
-                        -Metadata $metadata
                     
                     $hasTitlePage = $true
                     $script:pageBreaked = $false
@@ -2616,7 +2909,12 @@ function Build-WordDocument {
         if (-not $tocInserted -and $hasTitlePage) {
             Add-PageBreakToDocument -Document $document
             Add-TableOfContents -Document $document -Config $Config
-            Add-PageBreakToDocument -Document $document
+            
+            # 目次の直後に本文開始用の改ページを1つだけ入れる
+            $range = $document.Content
+            $range.Collapse((Get-WordConstant 'wdCollapseEnd'))
+            $range.InsertBreak((Get-WordConstant 'wdPageBreak'))
+
             $tocInserted = $true
         }
 

@@ -7,6 +7,10 @@
       "RightMarginMm": 20
     }
   },
+  "CoverPage": {
+    "Mode": "Template",
+    "TemplatePath": ".\\template\\cover-template.docx"
+  },
   "HeaderFooter": {
     "Header": {
       "Text": "{title}  {revnumber}",
