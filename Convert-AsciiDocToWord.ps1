@@ -795,6 +795,8 @@ function Set-TableCellTextWithHyperlinks {
         $StyleConfig
     )
 
+    $Text = $Text -replace "\\n", "`r"
+
     $cellTextRange = $Cell.Range.Duplicate
     $cellTextRange.MoveEnd(1, -1) | Out-Null
     $cellTextRange.Text = ''
@@ -849,8 +851,11 @@ function Set-TableCellTextWithHyperlinks {
         $r.Text = $afterText
     }
 
-    Apply-FontStyle -Range $cellTextRange -StyleConfig $StyleConfig
-    Apply-ParagraphStyle -Range $cellTextRange -StyleConfig $StyleConfig
+    $cellRange = $Cell.Range
+    $cellRange.End -= 1
+
+    Apply-FontStyle -Range $cellRange -StyleConfig $StyleConfig
+    Apply-ParagraphStyle -Range $cellRange -StyleConfig $StyleConfig
 }
 
 
@@ -1092,22 +1097,53 @@ function Set-BodyFooterPageNumber {
     $Document.Fields.Add($range, -1, 'SECTIONPAGES', $true) | Out-Null
 }
 
+# function Add-PageBreakToDocument {
+#     param($Document)
+
+#     try {
+#         if (-not $pageBreaked) {
+#             $range = $Document.Range()
+#             $range.Collapse((Get-WordConstant 'wdCollapseEnd'))
+#             [void]$range.InsertParagraphAfter()
+#             $range.Collapse((Get-WordConstant 'wdCollapseEnd'))
+#             [void]$range.InsertBreak((Get-WordConstant 'wdPageBreak'))
+#             [void]$range.InsertParagraphAfter()
+#         }
+#         else {
+#             Write-Output "既に改ページ済みのため、追加の改ページはスキップします。"
+#         }
+#         $script:pageBreaked = $true
+#     }
+#     catch {
+#         Append-TextParagraph -Document $Document -Text '[改ページ挿入失敗]' -StyleConfig $null | Out-Null
+#     }
+# }
+
 function Add-PageBreakToDocument {
     param($Document)
 
     try {
-        if (-not $pageBreaked) {
-            $range = $Document.Range()
-            $range.Collapse((Get-WordConstant 'wdCollapseEnd'))
-            [void]$range.InsertParagraphAfter()
-            $range.Collapse((Get-WordConstant 'wdCollapseEnd'))
-            [void]$range.InsertBreak((Get-WordConstant 'wdPageBreak'))
-            [void]$range.InsertParagraphAfter()
-        }
-        else {
-            Write-Output "既に改ページ済みのため、追加の改ページはスキップします。"
-        }
-        $script:pageBreaked = $true
+        $range = $Document.Range()
+        $range.Collapse((Get-WordConstant 'wdCollapseEnd'))
+        # [void]$range.InsertParagraphAfter()
+        # $range.Collapse((Get-WordConstant 'wdCollapseEnd'))
+        [void]$range.InsertBreak((Get-WordConstant 'wdPageBreak'))
+        # [void]$range.InsertParagraphAfter()
+    }
+    catch {
+        Append-TextParagraph -Document $Document -Text '[改ページ挿入失敗]' -StyleConfig $null | Out-Null
+    }
+}
+
+function Add-PageBreakToDocument {
+    param($Document)
+
+    try {
+        $range = $Document.Range()
+        $range.Collapse((Get-WordConstant 'wdCollapseEnd'))
+
+        # ★これだけでOK
+        [void]$range.InsertBreak((Get-WordConstant 'wdPageBreak'))
     }
     catch {
         Append-TextParagraph -Document $Document -Text '[改ページ挿入失敗]' -StyleConfig $null | Out-Null
@@ -1156,10 +1192,6 @@ function Add-TableOfContents {
     $range.Collapse((Get-WordConstant 'wdCollapseEnd'))
 
     $Document.TablesOfContents.Add($range, $true, 1, 3) | Out-Null
-
-    $range = $Document.Content
-    $range.Collapse((Get-WordConstant 'wdCollapseEnd'))
-    [void]$range.InsertParagraphAfter()
 }
 
 function Get-ColumnCountFromColsAttribute {
@@ -1325,6 +1357,167 @@ function Replace-WordText {
     ) | Out-Null
 }
 
+# function Add-WordTable {
+#     param(
+#         $Document,
+#         [object[]]$Rows,
+#         [int]$ColumnCount,
+#         $Config,
+#         [string]$Caption,
+#         $Attributes
+#     )
+
+#     if ($Caption) {
+#        $captionParagraph =  Append-TextParagraph -Document $Document -Text $Caption -StyleConfig $Config.Styles.FigureCaption
+#         try {
+#             $captionParagraph.Range.ParagraphFormat.KeepWithNext = $true
+#         } catch {
+#             Write-DebugLog "WARN failed to set KeepWithNext for caption: $($_.Exception.Message)"
+#         }
+#     }
+        
+#     $hasHeader = $false
+#     if ($Attributes -and
+#         $Attributes.ContainsKey('options')) {
+
+#         $opt = [string]$Attributes['options']
+
+#         if ($opt -match 'header') {
+#             $hasHeader = $true
+#         }
+#     }
+
+#     $autoNumber = $false
+#     if ($Attributes -and
+#         $Attributes.ContainsKey('options')) {
+
+#         $opt = [string]$Attributes['options']
+
+#         if ($opt -match 'autonumber') {
+#             $autoNumber = $true
+#         }
+#     }
+
+#     if (-not $Rows -or $Rows.Count -eq 0) {
+#         Append-TextParagraph -Document $Document -Text '[空テーブル]' -StyleConfig $Config.Styles.Body | Out-Null
+#         return
+#     }
+
+#     # ----- Word テーブル作成
+#     $range = $Document.Range($Document.Content.End - 1, $Document.Content.End - 1)
+
+#     $table = $Document.Tables.Add($range, $Rows.Count, $ColumnCount)
+#     $table.Borders.Enable = 1
+#     $table.Rows.AllowBreakAcrossPages = $false
+#     try { $table.AutoFitBehavior((Get-WordConstant 'wdAutoFitContent')) | Out-Null } catch {}
+
+#     # ----- 論理セル配置
+#     $grid      = @{}   # "r,c" -> cell
+#     $occupied  = @{}   # "r,c" -> $true
+
+#     for ($r = 0; $r -lt $Rows.Count; $r++) {
+#         $col = 0
+
+#         foreach ($cell in $Rows[$r]) {
+
+#             # 既存 occupied をスキップ
+#             while ($occupied["$r,$col"]) { $col++ }
+
+#             if ($col -ge $ColumnCount) { break }
+
+#             # grid 登録
+#             $grid["$r,$col"] = $cell
+
+#             # rowspan 占有（未来行のみ）
+#             if ($cell.RowSpan -gt 1) {
+#                 for ($rr = 1; $rr -lt $cell.RowSpan; $rr++) {
+#                     for ($cc = 0; $cc -lt $cell.ColSpan; $cc++) {
+#                         $occupied["$($r+$rr),$($col+$cc)"] = $true
+#                     }
+#                 }
+#             }
+
+#             # colspan 分進める
+#             $col += $cell.ColSpan
+
+#             # ★ ここが肝：もう一度 occupied を見る
+#             while ($occupied["$r,$col"]) { $col++ }
+#         }
+#     }
+        
+#     # ----- Word に反映（順序保証版）
+#     # キストのみ設定
+#     for ($r = 0; $r -lt $Rows.Count; $r++) {
+#         for ($c = 0; $c -lt $ColumnCount; $c++) {
+
+#             $key = "$r,$c"
+#             if (-not $grid.ContainsKey($key)) { continue }
+
+#             try {
+#                 $cellRange = $table.Cell($r + 1, $c + 1)
+#             }
+#             catch {
+#                 continue
+#             }
+
+#             $cell = $grid[$key]
+
+#             $text = [string]$cell.Text
+#             # options="autonumber" の場合、1列目に自動連番を設定する
+#             # ヘッダー行がある場合は2行目から 1,2,3...
+#             if ($autoNumber -and $c -eq 0) {
+#                 if (-not ($hasHeader -and $r -eq 0)) {
+#                     if ([string]::IsNullOrWhiteSpace($text)) {
+#                         $startRow = if ($hasHeader) { 1 } else { 0 }
+#                         $text = [string]($r - $startRow + 1)
+#                     }
+#                 }
+#             }            
+#             $isHeaderCell = $cell.IsHeader -or ($hasHeader -and $r -eq 0)
+
+#             if ($isHeaderCell) {
+#                 Set-TableCellTextWithHyperlinks `
+#                     -Document $Document `
+#                     -Cell $cellRange `
+#                     -Text $text `
+#                     -StyleConfig $Config.Styles.TableHeader
+#             }
+#             else {
+#                 Set-TableCellTextWithHyperlinks `
+#                     -Document $Document `
+#                     -Cell $cellRange `
+#                     -Text $text `
+#                     -StyleConfig $Config.Styles.TableBody
+#             }
+#         }
+#     }
+#     # Mergeのみ実施
+#     for ($r = 0; $r -lt $Rows.Count; $r++) {
+#         for ($c = 0; $c -lt $ColumnCount; $c++) {
+
+#             $key = "$r,$c"
+#             if (-not $grid.ContainsKey($key)) { continue }
+
+#             $cell = $grid[$key]
+#             if ($cell.RowSpan -le 1 -and $cell.ColSpan -le 1) { continue }
+
+#             try {
+#                 $cellRange = $table.Cell($r + 1, $c + 1)
+#                 $endRow = $r + $cell.RowSpan
+#                 $endCol = $c + $cell.ColSpan
+#                 $cellRange.Merge($table.Cell($endRow, $endCol))
+#             }
+#             catch {
+#                 continue
+#             }
+#         }
+#     }
+
+#     $after = $Document.Content
+#     $after.Collapse((Get-WordConstant 'wdCollapseEnd'))
+#     $after.InsertParagraphAfter() | Out-Null
+# }
+
 function Add-WordTable {
     param(
         $Document,
@@ -1336,34 +1529,10 @@ function Add-WordTable {
     )
 
     if ($Caption) {
-       $captionParagraph =  Append-TextParagraph -Document $Document -Text $Caption -StyleConfig $Config.Styles.FigureCaption
+        $captionParagraph = Append-TextParagraph -Document $Document -Text $Caption -StyleConfig $Config.Styles.FigureCaption
         try {
             $captionParagraph.Range.ParagraphFormat.KeepWithNext = $true
-        } catch {
-            Write-DebugLog "WARN failed to set KeepWithNext for caption: $($_.Exception.Message)"
-        }
-    }
-        
-    $hasHeader = $false
-    if ($Attributes -and
-        $Attributes.ContainsKey('options')) {
-
-        $opt = [string]$Attributes['options']
-
-        if ($opt -match 'header') {
-            $hasHeader = $true
-        }
-    }
-
-    $autoNumber = $false
-    if ($Attributes -and
-        $Attributes.ContainsKey('options')) {
-
-        $opt = [string]$Attributes['options']
-
-        if ($opt -match 'autonumber') {
-            $autoNumber = $true
-        }
+        } catch {}
     }
 
     if (-not $Rows -or $Rows.Count -eq 0) {
@@ -1371,32 +1540,33 @@ function Add-WordTable {
         return
     }
 
-    # ----- Word テーブル作成
+    # =========================
+    # ① テーブル生成
+    # =========================
     $range = $Document.Range($Document.Content.End - 1, $Document.Content.End - 1)
 
     $table = $Document.Tables.Add($range, $Rows.Count, $ColumnCount)
     $table.Borders.Enable = 1
     $table.Rows.AllowBreakAcrossPages = $false
+
+    # ★ 初期はAutoFit（後でOFF）
     try { $table.AutoFitBehavior((Get-WordConstant 'wdAutoFitContent')) | Out-Null } catch {}
 
-    # ----- 論理セル配置
-    $grid      = @{}   # "r,c" -> cell
-    $occupied  = @{}   # "r,c" -> $true
+    # =========================
+    # ② セル内容設定（そのまま）
+    # =========================
+    $grid = @{}
+    $occupied = @{}
 
     for ($r = 0; $r -lt $Rows.Count; $r++) {
         $col = 0
 
         foreach ($cell in $Rows[$r]) {
-
-            # 既存 occupied をスキップ
             while ($occupied["$r,$col"]) { $col++ }
-
             if ($col -ge $ColumnCount) { break }
 
-            # grid 登録
             $grid["$r,$col"] = $cell
 
-            # rowspan 占有（未来行のみ）
             if ($cell.RowSpan -gt 1) {
                 for ($rr = 1; $rr -lt $cell.RowSpan; $rr++) {
                     for ($cc = 0; $cc -lt $cell.ColSpan; $cc++) {
@@ -1405,16 +1575,13 @@ function Add-WordTable {
                 }
             }
 
-            # colspan 分進める
             $col += $cell.ColSpan
-
-            # ★ ここが肝：もう一度 occupied を見る
             while ($occupied["$r,$col"]) { $col++ }
         }
     }
-        
-    # ----- Word に反映（順序保証版）
-    # キストのみ設定
+    $table.Rows(1).HeadingFormat = -1
+
+    # ---- テキスト投入
     for ($r = 0; $r -lt $Rows.Count; $r++) {
         for ($c = 0; $c -lt $ColumnCount; $c++) {
 
@@ -1423,43 +1590,62 @@ function Add-WordTable {
 
             try {
                 $cellRange = $table.Cell($r + 1, $c + 1)
-            }
-            catch {
-                continue
-            }
+            } catch { continue }
 
             $cell = $grid[$key]
-
             $text = [string]$cell.Text
-            # options="autonumber" の場合、1列目に自動連番を設定する
-            # ヘッダー行がある場合は2行目から 1,2,3...
+
+            # =========================
+            # ★ autonumber 復活（ここ）
+            # =========================
+            $hasHeader = $false
+            $autoNumber = $false
+            if ($Attributes -and
+                $Attributes.ContainsKey('options')) {
+
+                $opt = [string]$Attributes['options']
+
+                if ($opt -match 'autonumber') {
+                    $autoNumber = $true
+                }
+                if ($opt -match 'header') {
+                    $hasHeader = $true
+                }
+            }
+
             if ($autoNumber -and $c -eq 0) {
+
+                # ヘッダー行は除外
                 if (-not ($hasHeader -and $r -eq 0)) {
+
                     if ([string]::IsNullOrWhiteSpace($text)) {
+
                         $startRow = if ($hasHeader) { 1 } else { 0 }
                         $text = [string]($r - $startRow + 1)
                     }
                 }
-            }            
+            }
+
+            # =========================
+            # スタイル選択
+            # =========================
             $isHeaderCell = $cell.IsHeader -or ($hasHeader -and $r -eq 0)
 
-            if ($isHeaderCell) {
-                Set-TableCellTextWithHyperlinks `
-                    -Document $Document `
-                    -Cell $cellRange `
-                    -Text $text `
-                    -StyleConfig $Config.Styles.TableHeader
+            $style = if ($isHeaderCell) {
+                $Config.Styles.TableHeader
+            } else {
+                $Config.Styles.TableBody
             }
-            else {
-                Set-TableCellTextWithHyperlinks `
-                    -Document $Document `
-                    -Cell $cellRange `
-                    -Text $text `
-                    -StyleConfig $Config.Styles.TableBody
-            }
+
+            Set-TableCellTextWithHyperlinks `
+                -Document $Document `
+                -Cell $cellRange `
+                -Text $text `
+                -StyleConfig $style
         }
     }
-    # Mergeのみ実施
+
+    # ---- Merge
     for ($r = 0; $r -lt $Rows.Count; $r++) {
         for ($c = 0; $c -lt $ColumnCount; $c++) {
 
@@ -1471,19 +1657,64 @@ function Add-WordTable {
 
             try {
                 $cellRange = $table.Cell($r + 1, $c + 1)
-                $endRow = $r + $cell.RowSpan
-                $endCol = $c + $cell.ColSpan
-                $cellRange.Merge($table.Cell($endRow, $endCol))
-            }
-            catch {
-                continue
-            }
+                $cellRange.Merge($table.Cell($r + $cell.RowSpan, $c + $cell.ColSpan))
+            } catch {}
         }
     }
 
-    $after = $Document.Content
-    $after.Collapse((Get-WordConstant 'wdCollapseEnd'))
-    $after.InsertParagraphAfter() | Out-Null
+    # =========================
+    # ③ ★ここが重要：幅を最後に確定
+    # =========================
+
+    try {
+        $pageWidth   = $Document.PageSetup.PageWidth
+        $leftMargin  = $Document.PageSetup.LeftMargin
+        $rightMargin = $Document.PageSetup.RightMargin
+
+        $range = $Document.Content
+        $range.Collapse((Get-WordConstant 'wdCollapseEnd'))
+
+        $leftIndent = $range.ParagraphFormat.LeftIndent
+
+        $availableWidth = $pageWidth - $leftMargin - $rightMargin - $leftIndent
+
+        # ★ AutoFit OFF（絶対必要）
+        $table.AutoFitBehavior(0)
+
+        $table.PreferredWidthType = 3
+        $table.PreferredWidth     = $availableWidth
+
+        # ---- cols属性
+        if ($Attributes -and $Attributes.ContainsKey('cols')) {
+
+            $ratios = $Attributes['cols'] -split ',' | ForEach-Object { [double]($_.Trim()) }
+            $sum = ($ratios | Measure-Object -Sum).Sum
+
+            if ($ratios.Count -eq $ColumnCount -and $sum -gt 0) {
+
+                for ($i = 1; $i -le $ColumnCount; $i++) {
+                    $table.Columns.Item($i).Width = $availableWidth * ($ratios[$i - 1] / $sum)
+                }
+            }
+            else {
+                # フォールバック（均等）
+                $w = $availableWidth / $ColumnCount
+                for ($i = 1; $i -le $ColumnCount; $i++) {
+                    $table.Columns.Item($i).Width = $w
+                }
+            }
+        }
+        else {
+            # cols指定なし
+            $w = $availableWidth / $ColumnCount
+            for ($i = 1; $i -le $ColumnCount; $i++) {
+                $table.Columns.Item($i).Width = $w
+            }
+        }
+    }
+    catch {}
+
+    # ★ 最後に余計な段落は作らない
 }
 
 function Get-ImageFullPath {
@@ -2612,7 +2843,10 @@ function Build-WordDocument {
         $Config,
         [string]$OutputFullPath
     )
-    
+
+    $justAfterPageBreak = $false
+    $lastElementType   = $null
+    $lastHeadingLevel  = 0
     $currentListLevel = 0
     
     # 番号付き箇条書きの番号
@@ -2686,17 +2920,16 @@ function Build-WordDocument {
         $ownerInserted = $false
         $hasTitlePage = $false
         $tocInserted = $false
-        $script:pageBreaked = $false
         $insideListContinuation = $false
         
         foreach ($element in $Parsed.Elements) {
             if (-not $tocInserted -and $hasTitlePage -and $element.Type -ne 'title') {
                 if (-not $usingCoverTemplate) {
                     Add-PageBreakToDocument -Document $document
+                    $justAfterPageBreak = $true
                 }
 
                 Add-TableOfContents -Document $document -Config $Config
-                $script:pageBreaked = $false
                 Add-SectionBreakToDocument -Document $document
                 Set-BodyFooterPageNumber -Document $document                
                 $tocInserted = $true
@@ -2728,16 +2961,74 @@ function Build-WordDocument {
                     Set-HeaderFooter -Document $document -Config $Config -Metadata $metadata -IsCovePage $true
                     
                     $hasTitlePage = $true
-                    $script:pageBreaked = $false
                 }
+                # 'heading' {
+                #     $level = [int]$element.Level
+                #     if ($level -lt 1) { $level = 1 }
+                #     if ($level -gt 6) { $level = 6 }
+
+                #     if ($level -eq 1 -and -not $isFirstHeading) {
+                #         Add-PageBreakToDocument -Document $document
+                #     }
+                #     $isFirstHeading = $false
+
+                #     $headingCounters[$level - 1]++
+                #     for ($i = $level; $i -lt $headingCounters.Length; $i++) {
+                #         $headingCounters[$i] = 0
+                #     }
+
+                #     $nums = New-Object System.Collections.Generic.List[string]
+                #     for ($i = 0; $i -lt $level; $i++) {
+                #         if ($headingCounters[$i] -gt 0) {
+                #             $nums.Add([string]$headingCounters[$i])
+                #         }
+                #     }
+
+                #     $headingText = (($nums -join '.') + ' ' + $element.Text).Trim()
+
+                #     $styleName = 'Heading' + [string]$level
+                #     $styleConfig = $Config.Styles.$styleName
+                #     if (-not $styleConfig) { $styleConfig = $Config.Styles.HeadingDefault }
+
+                #     Append-HeadingParagraph -Document $document -Text $headingText -Level $level -StyleConfig $styleConfig | Out-Null
+                
+                # }
+
                 'heading' {
+
                     $level = [int]$element.Level
                     if ($level -lt 1) { $level = 1 }
                     if ($level -gt 6) { $level = 6 }
 
-                    if ($level -eq 1 -and -not $isFirstHeading) {
-                        Add-PageBreakToDocument -Document $document
+                    # =============================
+                    # ① 章（Level1）
+                    # =============================
+                    if ($level -eq 1) {
+
+                        # 直前が改ページでなければ改ページ
+                        if (-not $justAfterPageBreak -and -not $isFirstHeading) {
+                            Add-PageBreakToDocument -Document $document
+                            $justAfterPageBreak = $true
+                        }
                     }
+
+                    # =============================
+                    # ② 節（Level2）
+                    # =============================
+                    elseif ($level -eq 2) {
+
+                        # 条件で空行挿入
+                        if (
+                            -not $justAfterPageBreak -and
+                            -not ($lastElementType -eq 'heading' -and $lastHeadingLevel -eq 1)
+                        ) {
+                            Append-BlankParagraph -Document $document
+                        }
+                    }
+
+                    # =============================
+                    # 出力（既存そのまま）
+                    # =============================
                     $isFirstHeading = $false
 
                     $headingCounters[$level - 1]++
@@ -2758,9 +3049,20 @@ function Build-WordDocument {
                     $styleConfig = $Config.Styles.$styleName
                     if (-not $styleConfig) { $styleConfig = $Config.Styles.HeadingDefault }
 
-                    Append-HeadingParagraph -Document $document -Text $headingText -Level $level -StyleConfig $styleConfig | Out-Null
-                
+                    Append-HeadingParagraph `
+                        -Document $document `
+                        -Text $headingText `
+                        -Level $level `
+                        -StyleConfig $styleConfig | Out-Null
+
+                    # =============================
+                    # 状態更新
+                    # =============================
+                    $lastElementType = 'heading'
+                    $lastHeadingLevel = $level
+                    $justAfterPageBreak = $false
                 }
+
                 'paragraph' {
                     $style = $Config.Styles.Body
                     $text = [string]$element.Text
@@ -2879,6 +3181,7 @@ function Build-WordDocument {
                 }
                 'pagebreak' { 
                     Add-PageBreakToDocument -Document $document 
+                    $justAfterPageBreak = $true
                 }
                 'image' { 
                     Add-ImageToDocument -Document $document -ImagePath $element.Path -Caption $element.Caption -Config $Config 
@@ -2901,9 +3204,32 @@ function Build-WordDocument {
                     Append-TextParagraph -Document $document -Text ('[未対応要素: ' + $element.Type + ']') -StyleConfig $Config.Styles.Body | Out-Null 
                 }
             }
-            if ($element.Type -ne 'pagebreak') { 
-                $script:pageBreaked = $false
-            }
+            # if ($element.Type -ne 'pagebreak') { 
+            #     $script:pageBreaked = $false
+            # }
+
+            switch ($element.Type) {
+
+                'heading' {
+                    # すでにheading内で更新してるので何もしない
+                }
+
+                'pagebreak' {
+                    $justAfterPageBreak = $true
+                    # lastElementTypeは変更しない
+                }
+
+                { $_ -in @('paragraph','bullet','numbered','image','table','admonition','tablecaption') } {
+                    $lastElementType = 'paragraph'
+                    $justAfterPageBreak = $false
+                }
+
+                default {
+                    # 基本は本文扱い
+                    $lastElementType = 'paragraph'
+                    $justAfterPageBreak = $false
+                }
+            }            
         }
 
         if (-not $tocInserted -and $hasTitlePage) {
