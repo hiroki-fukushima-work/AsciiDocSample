@@ -205,6 +205,9 @@
       "LineSpacingRule": "Exactly",
       "LineSpacing": 11
     },
+    "Table": {
+      "NumberWidth": 24
+    },
     "TableCaption": {
       "FontName": "游ゴシック",
       "Size": 10,

@@ -1642,29 +1642,16 @@ function Add-WordTable {
                 -Cell $cellRange `
                 -Text $text `
                 -StyleConfig $style
+            if ($autoNumber -and $c -eq 0) {
+                try {
+                    $cellRange.ParagraphFormat.Alignment = 2 # 右寄せ
+                    $cellRange.ParagraphFormat.WordWrap = $false
+                    $cellRange.ParagraphFormat.Hyphenation = 0
+                } catch {}
+            }
         }
     }
 
-    # ---- Merge
-    for ($r = 0; $r -lt $Rows.Count; $r++) {
-        for ($c = 0; $c -lt $ColumnCount; $c++) {
-
-            $key = "$r,$c"
-            if (-not $grid.ContainsKey($key)) { continue }
-
-            $cell = $grid[$key]
-            if ($cell.RowSpan -le 1 -and $cell.ColSpan -le 1) { continue }
-
-            try {
-                $cellRange = $table.Cell($r + 1, $c + 1)
-                $cellRange.Merge($table.Cell($r + $cell.RowSpan, $c + $cell.ColSpan))
-            } catch {}
-        }
-    }
-
-    # =========================
-    # ③ ★ここが重要：幅を最後に確定
-    # =========================
 
     try {
         $pageWidth   = $Document.PageSetup.PageWidth
@@ -1686,33 +1673,68 @@ function Add-WordTable {
 
         # ---- cols属性
         if ($Attributes -and $Attributes.ContainsKey('cols')) {
+            $ratios = $Attributes['cols'] -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ -match '^\d+(\.\d+)?$' } | ForEach-Object { [double]$_ }
+        }
+        else {
+            $ratios = @(for ($i = 0; $i -lt $ColumnCount; $ii++) { 11 })
+        }
 
-            $ratios = $Attributes['cols'] -split ',' | ForEach-Object { [double]($_.Trim()) }
-            $sum = ($ratios | Measure-Object -Sum).Sum
+        if ($autoNumber) {
+            $remainRatios = $ratios[1..($ratios.Count -  1)]
+            $availableWidth -= $Config.Styles.Table.NumberWidth
+        }
+        else {
+            $remainRatios = $ratios
+        }
 
-            if ($ratios.Count -eq $ColumnCount -and $sum -gt 0) {
+        $sum = ($remainRatios | Measure-Object -Sum).Sum
 
-                for ($i = 1; $i -le $ColumnCount; $i++) {
-                    $table.Columns.Item($i).Width = $availableWidth * ($ratios[$i - 1] / $sum)
+        if ($ratios.Count -eq $ColumnCount -and $sum -gt 0) {
+
+            $debugWidths = @()
+            for ($i = 1; $i -le $ColumnCount; $i++) {
+                $width = 0
+                if ($autoNumber -and $i -eq 1) {
+                    $width = [float]$Config.Styles.Table.NumberWidth
                 }
-            }
-            else {
-                # フォールバック（均等）
-                $w = $availableWidth / $ColumnCount
-                for ($i = 1; $i -le $ColumnCount; $i++) {
-                    $table.Columns.Item($i).Width = $w
+                else {
+                    $width = [float]($availableWidth * ($ratios[$i - 1] / $sum))
+                    # remainRatiosを使わない理由は ループのインデックスはNumber列も含んでいる為
+                    # remainRatiosは列を除いた比率を計算するために使っているだけ
                 }
+                $table.Columns.Item($i).Width = $width
+                $debugWidths += $width
             }
         }
         else {
-            # cols指定なし
+            # フォールバック（均等）
             $w = $availableWidth / $ColumnCount
             for ($i = 1; $i -le $ColumnCount; $i++) {
                 $table.Columns.Item($i).Width = $w
             }
         }
     }
-    catch {}
+    catch {
+        Write-Host "Error"
+        Write-Host "WARN failed to set table width: NumberWidth:$($Config.Styles.Table.NumberWidth) $($_.InvocationInfo.Line):($($_.InvocationInfo.ScriptLineNumber)) $($_.Exception.Message) $($_.Exception.StackTrace)"
+    }
+
+    # ---- Merge
+    for ($r = 0; $r -lt $Rows.Count; $r++) {
+        for ($c = 0; $c -lt $ColumnCount; $c++) {
+
+            $key = "$r,$c"
+            if (-not $grid.ContainsKey($key)) { continue }
+
+            $cell = $grid[$key]
+            if ($cell.RowSpan -le 1 -and $cell.ColSpan -le 1) { continue }
+
+            try {
+                $cellRange = $table.Cell($r + 1, $c + 1)
+                $cellRange.Merge($table.Cell($r + $cell.RowSpan, $c + $cell.ColSpan))
+            } catch {}
+        }
+    }
 
     # ★ 最後に余計な段落は作らない
 }
