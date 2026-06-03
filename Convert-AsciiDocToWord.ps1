@@ -565,97 +565,6 @@ function Convert-InlineEmphasis {
     return $runs
 }
 
-# function Append-TextParagraph {
-#     param(
-#         $Document,
-#         [string]$Text,
-#         $StyleConfig,
-#         [switch]$NoTrailingParagraph
-#     )
-    
-
-#     $range = $Document.Content
-#     $range.Collapse((Get-WordConstant 'wdCollapseEnd'))
-    
-#     if ($NoTrailingParagraph) {
-#         $range.Text = $Text
-#     }
-#     else {
-#         $range.Text = $Text + [Environment]::NewLine
-#     }
-#     Apply-FontStyle -Range $range -StyleConfig $StyleConfig
-#     Apply-ParagraphStyle -Range $range -StyleConfig $StyleConfig
-    
-#     return $range
-# }
-
-# function Append-TextParagraph {
-#     param(
-#         $Document,
-#         [string]$Text,
-#         $StyleConfig,
-#         [switch]$NoTrailingParagraph
-#     )
-
-#     $runs = Convert-InlineEmphasis -Text $Text
-#     $plainText = ($runs | ForEach-Object { $_.Text }) -join ''
-
-#     $range = $Document.Content
-#     $range.Collapse((Get-WordConstant 'wdCollapseEnd'))
-
-#     $insertStart = $range.Start
-
-#     if ($NoTrailingParagraph) {
-#         $insertText = $plainText
-#     }
-#     else {
-#         $insertText = $plainText + [Environment]::NewLine
-#     }
-
-#     $range.Text = $insertText
-
-#     Apply-FontStyle -Range $range -StyleConfig $StyleConfig
-#     Apply-ParagraphStyle -Range $range -StyleConfig $StyleConfig
-
-#     $insertEnd = $insertStart + $plainText.Length
-#     $rangeEnd = $range.End
-
-#     if ($insertEnd -gt $rangeEnd) {
-#         $insertEnd = $rangeEnd
-#     }
-
-#     $pos = $insertStart
-
-#     foreach ($run in $runs) {
-#         $length = ([string]$run.Text).Length
-#         if ($length -le 0) {
-#             continue
-#         }
-
-#         $end = $pos + $length
-
-#         if ($end -gt $insertEnd) {
-#             $end = $insertEnd
-#         }
-
-#         if ($pos -lt $end) {
-#             $runRange = $Document.Range($pos, $end)
-
-#             if ($run.Bold) {
-#                 $runRange.Font.Bold = 1
-#             }
-
-#             if ($run.Italic) {
-#                 $runRange.Font.Italic = 1
-#             }
-#         }
-
-#         $pos += $length
-#     }
-
-#     return $range
-# }
-
 function Append-BlankParagraph {
     param($Document)
     
@@ -1097,28 +1006,6 @@ function Set-BodyFooterPageNumber {
     $Document.Fields.Add($range, -1, 'SECTIONPAGES', $true) | Out-Null
 }
 
-# function Add-PageBreakToDocument {
-#     param($Document)
-
-#     try {
-#         if (-not $pageBreaked) {
-#             $range = $Document.Range()
-#             $range.Collapse((Get-WordConstant 'wdCollapseEnd'))
-#             [void]$range.InsertParagraphAfter()
-#             $range.Collapse((Get-WordConstant 'wdCollapseEnd'))
-#             [void]$range.InsertBreak((Get-WordConstant 'wdPageBreak'))
-#             [void]$range.InsertParagraphAfter()
-#         }
-#         else {
-#             Write-Output "既に改ページ済みのため、追加の改ページはスキップします。"
-#         }
-#         $script:pageBreaked = $true
-#     }
-#     catch {
-#         Append-TextParagraph -Document $Document -Text '[改ページ挿入失敗]' -StyleConfig $null | Out-Null
-#     }
-# }
-
 function Add-PageBreakToDocument {
     param($Document)
 
@@ -1357,167 +1244,6 @@ function Replace-WordText {
     ) | Out-Null
 }
 
-# function Add-WordTable {
-#     param(
-#         $Document,
-#         [object[]]$Rows,
-#         [int]$ColumnCount,
-#         $Config,
-#         [string]$Caption,
-#         $Attributes
-#     )
-
-#     if ($Caption) {
-#        $captionParagraph =  Append-TextParagraph -Document $Document -Text $Caption -StyleConfig $Config.Styles.FigureCaption
-#         try {
-#             $captionParagraph.Range.ParagraphFormat.KeepWithNext = $true
-#         } catch {
-#             Write-DebugLog "WARN failed to set KeepWithNext for caption: $($_.Exception.Message)"
-#         }
-#     }
-        
-#     $hasHeader = $false
-#     if ($Attributes -and
-#         $Attributes.ContainsKey('options')) {
-
-#         $opt = [string]$Attributes['options']
-
-#         if ($opt -match 'header') {
-#             $hasHeader = $true
-#         }
-#     }
-
-#     $autoNumber = $false
-#     if ($Attributes -and
-#         $Attributes.ContainsKey('options')) {
-
-#         $opt = [string]$Attributes['options']
-
-#         if ($opt -match 'autonumber') {
-#             $autoNumber = $true
-#         }
-#     }
-
-#     if (-not $Rows -or $Rows.Count -eq 0) {
-#         Append-TextParagraph -Document $Document -Text '[空テーブル]' -StyleConfig $Config.Styles.Body | Out-Null
-#         return
-#     }
-
-#     # ----- Word テーブル作成
-#     $range = $Document.Range($Document.Content.End - 1, $Document.Content.End - 1)
-
-#     $table = $Document.Tables.Add($range, $Rows.Count, $ColumnCount)
-#     $table.Borders.Enable = 1
-#     $table.Rows.AllowBreakAcrossPages = $false
-#     try { $table.AutoFitBehavior((Get-WordConstant 'wdAutoFitContent')) | Out-Null } catch {}
-
-#     # ----- 論理セル配置
-#     $grid      = @{}   # "r,c" -> cell
-#     $occupied  = @{}   # "r,c" -> $true
-
-#     for ($r = 0; $r -lt $Rows.Count; $r++) {
-#         $col = 0
-
-#         foreach ($cell in $Rows[$r]) {
-
-#             # 既存 occupied をスキップ
-#             while ($occupied["$r,$col"]) { $col++ }
-
-#             if ($col -ge $ColumnCount) { break }
-
-#             # grid 登録
-#             $grid["$r,$col"] = $cell
-
-#             # rowspan 占有（未来行のみ）
-#             if ($cell.RowSpan -gt 1) {
-#                 for ($rr = 1; $rr -lt $cell.RowSpan; $rr++) {
-#                     for ($cc = 0; $cc -lt $cell.ColSpan; $cc++) {
-#                         $occupied["$($r+$rr),$($col+$cc)"] = $true
-#                     }
-#                 }
-#             }
-
-#             # colspan 分進める
-#             $col += $cell.ColSpan
-
-#             # ★ ここが肝：もう一度 occupied を見る
-#             while ($occupied["$r,$col"]) { $col++ }
-#         }
-#     }
-        
-#     # ----- Word に反映（順序保証版）
-#     # キストのみ設定
-#     for ($r = 0; $r -lt $Rows.Count; $r++) {
-#         for ($c = 0; $c -lt $ColumnCount; $c++) {
-
-#             $key = "$r,$c"
-#             if (-not $grid.ContainsKey($key)) { continue }
-
-#             try {
-#                 $cellRange = $table.Cell($r + 1, $c + 1)
-#             }
-#             catch {
-#                 continue
-#             }
-
-#             $cell = $grid[$key]
-
-#             $text = [string]$cell.Text
-#             # options="autonumber" の場合、1列目に自動連番を設定する
-#             # ヘッダー行がある場合は2行目から 1,2,3...
-#             if ($autoNumber -and $c -eq 0) {
-#                 if (-not ($hasHeader -and $r -eq 0)) {
-#                     if ([string]::IsNullOrWhiteSpace($text)) {
-#                         $startRow = if ($hasHeader) { 1 } else { 0 }
-#                         $text = [string]($r - $startRow + 1)
-#                     }
-#                 }
-#             }            
-#             $isHeaderCell = $cell.IsHeader -or ($hasHeader -and $r -eq 0)
-
-#             if ($isHeaderCell) {
-#                 Set-TableCellTextWithHyperlinks `
-#                     -Document $Document `
-#                     -Cell $cellRange `
-#                     -Text $text `
-#                     -StyleConfig $Config.Styles.TableHeader
-#             }
-#             else {
-#                 Set-TableCellTextWithHyperlinks `
-#                     -Document $Document `
-#                     -Cell $cellRange `
-#                     -Text $text `
-#                     -StyleConfig $Config.Styles.TableBody
-#             }
-#         }
-#     }
-#     # Mergeのみ実施
-#     for ($r = 0; $r -lt $Rows.Count; $r++) {
-#         for ($c = 0; $c -lt $ColumnCount; $c++) {
-
-#             $key = "$r,$c"
-#             if (-not $grid.ContainsKey($key)) { continue }
-
-#             $cell = $grid[$key]
-#             if ($cell.RowSpan -le 1 -and $cell.ColSpan -le 1) { continue }
-
-#             try {
-#                 $cellRange = $table.Cell($r + 1, $c + 1)
-#                 $endRow = $r + $cell.RowSpan
-#                 $endCol = $c + $cell.ColSpan
-#                 $cellRange.Merge($table.Cell($endRow, $endCol))
-#             }
-#             catch {
-#                 continue
-#             }
-#         }
-#     }
-
-#     $after = $Document.Content
-#     $after.Collapse((Get-WordConstant 'wdCollapseEnd'))
-#     $after.InsertParagraphAfter() | Out-Null
-# }
-
 function Add-WordTable {
     param(
         $Document,
@@ -1673,11 +1399,47 @@ function Add-WordTable {
 
         # ---- cols属性
         if ($Attributes -and $Attributes.ContainsKey('cols')) {
-            $ratios = $Attributes['cols'] -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ -match '^\d+(\.\d+)?$' } | ForEach-Object { [double]$_ }
+
+            $colDefs = $Attributes['cols'] -split ',' | ForEach-Object {
+
+                $s = $_.Trim()
+
+                $ratio = 1
+                $align = $null
+                $isAsciiDoc = $false
+
+                # 数値
+                if ($s -match '^\d+') {
+                    $ratio = [double]$matches[0]
+                }
+
+                # 属性
+                if ($s -match '[lcr]') {
+                    $align = $matches[0]
+                }
+
+                if ($s -match 'a') {
+                    $isAsciiDoc = $true
+                }
+
+                [PSCustomObject]@{
+                    Ratio      = $ratio
+                    Align      = $align
+                    IsAsciiDoc = $isAsciiDoc
+                }
+            }
         }
         else {
-            $ratios = @(for ($i = 0; $i -lt $ColumnCount; $ii++) { 11 })
+            $colDefs = @(for ($i = 0; $i -lt $ColumnCount; $ii++) { 11 }) | ForEach-Object {
+                [PSCustomObject]@{
+                    Ratio      = $_
+                    Align      = $null
+                    IsAsciiDoc = $false
+                }
+            }
+            
         }
+        $ratios = $colDefs | ForEach-Object { $_.Ratio }
 
         if ($autoNumber) {
             $remainRatios = $ratios[1..($ratios.Count -  1)]
@@ -1693,7 +1455,7 @@ function Add-WordTable {
 
             $debugWidths = @()
             for ($i = 1; $i -le $ColumnCount; $i++) {
-                $width = 0
+                $width = 0.0
                 if ($autoNumber -and $i -eq 1) {
                     $width = [float]$Config.Styles.Table.NumberWidth
                 }
@@ -1702,7 +1464,8 @@ function Add-WordTable {
                     # remainRatiosを使わない理由は ループのインデックスはNumber列も含んでいる為
                     # remainRatiosは列を除いた比率を計算するために使っているだけ
                 }
-                $table.Columns.Item($i).Width = $width
+                #Write-Host "Column $($i): Ratio=$($ratios[$i - 1]) Width=$($width)"
+                $table.Columns.Item($i).Width = [float]$width
                 $debugWidths += $width
             }
         }
@@ -1809,144 +1572,84 @@ function Add-ImageToDocument {
     # -----------------------------
     # ③ 画像挿入（仮）
     # -----------------------------
-    $shape = $Document.InlineShapes.AddPicture($ImagePath, $false, $true, $range)
+    if (Test-Path -LiteralPath $ImagePath) {
+        try {
+            $shape = $Document.InlineShapes.AddPicture($ImagePath, $false, $true, $range)
+            $shape.Range.ParagraphFormat.KeepTogether = $true
 
-    try {
-        $shape.Range.ParagraphFormat.KeepTogether = $true
-    } catch {}
+            # -----------------------------
+            # ④ サイズ制御（ここがガチ）
+            # -----------------------------
+            $originalWidth = $shape.Width
+            $originalHeight = $shape.Height
 
-    # -----------------------------
-    # ④ サイズ制御（ここがガチ）
-    # -----------------------------
-    $originalWidth = $shape.Width
-    $originalHeight = $shape.Height
-
-    # 設定値（あれば）
-    $maxWidth = $null
-    if ($Config.Image.MaxWidthMm) {
-        $maxWidth = $app.MillimetersToPoints([double]$Config.Image.MaxWidthMm)
-    }
-
-    # --- 横方向制限 ---
-    if ($maxWidth -and $originalWidth -gt $maxWidth) {
-        $shape.LockAspectRatio = $true
-        $shape.Width = $maxWidth
-    }
-
-    # 再取得（縮んだ可能性）
-    $currentHeight = $shape.Height
-
-    # キャプション分を考慮（適当だが効果あり）
-    $captionReserve = 150  # pt（微調整可）
-
-    $availableHeight = $remainingHeight - $captionReserve
-
-    # -----------------------------
-    # ⑤ はみ出る場合の処理
-    # -----------------------------
-    if ($currentHeight -gt $availableHeight) {
-
-        # --- 縮小可能なら縮小 ---
-        if ($availableHeight -gt 50) {
-
-            $ratio = $availableHeight / $currentHeight
-
-            if ($ratio -lt 1.0) {
-                $shape.LockAspectRatio = $true
-                $shape.Height = $shape.Height * $ratio
+            # 設定値（あれば）
+            $maxWidth = $null
+            if ($Config.Image.MaxWidthMm) {
+                $maxWidth = $app.MillimetersToPoints([double]$Config.Image.MaxWidthMm)
             }
 
-        } else {
-            # --- どうしようもない → 改ページ ---
-            $shape.Delete()
+            # --- 横方向制限 ---
+            if ($maxWidth -and $originalWidth -gt $maxWidth) {
+                $shape.LockAspectRatio = $true
+                $shape.Width = $maxWidth
+            }
 
-            # 改ページ
-            $range = $Document.Content
-            $range.Collapse(0)
-            $range.InsertBreak(7) # wdPageBreak
+            # 再取得（縮んだ可能性）
+            $currentHeight = $shape.Height
 
-            # 再挿入
-            $range = $Document.Content
-            $range.Collapse(0)
+            # キャプション分を考慮（適当だが効果あり）
+            $captionReserve = 150  # pt（微調整可）
 
-            $shape = $Document.InlineShapes.AddPicture($ImagePath, $false, $true, $range)
-        }
+            $availableHeight = $remainingHeight - $captionReserve
+
+            # -----------------------------
+            # ⑤ はみ出る場合の処理
+            # -----------------------------
+            if ($currentHeight -gt $availableHeight) {
+
+                # --- 縮小可能なら縮小 ---
+                if ($availableHeight -gt 50) {
+
+                    $ratio = $availableHeight / $currentHeight
+
+                    if ($ratio -lt 1.0) {
+                        $shape.LockAspectRatio = $true
+                        $shape.Height = $shape.Height * $ratio
+                    }
+
+                } else {
+                    # --- どうしようもない → 改ページ ---
+                    $shape.Delete()
+
+                    # 改ページ
+                    $range = $Document.Content
+                    $range.Collapse(0)
+                    $range.InsertBreak(7) # wdPageBreak
+
+                    # 再挿入
+                    $range = $Document.Content
+                    $range.Collapse(0)
+
+                    $shape = $Document.InlineShapes.AddPicture($ImagePath, $false, $true, $range)
+                }
+            }
+        } catch {}
     }
+    else {
+        $text = "【画像が見つかりません】`r$ImagePath"
 
+        Append-TextParagraph `
+            -Document $Document `
+            -Text $text `
+            -StyleConfig $Config.Styles.Body | Out-Null
+    }
+    
     # -----------------------------
     # ⑥ 後処理
     # -----------------------------
     $Document.Content.InsertParagraphAfter() | Out-Null
 }
-
-# function Add-ImageToDocument {
-#     param(
-#         [Parameter(Mandatory=$true)]$Document,
-#         [Parameter(Mandatory=$true)][string]$ImagePath,
-#         [string]$Caption,
-#         $Config
-#     )
-    
-
-#     if ($Caption) {
-#         $captionRange = Append-TextParagraph `
-#             -Document $Document `
-#             -Text $Caption `
-#             -StyleConfig $Config.Styles.FigureCaption
-
-#         try {
-#             $captionRange.ParagraphFormat.KeepWithNext = $true
-#         } catch {}
-
-#     }
-
-#     $resolvedImagePath = $ImagePath
-#     try {
-#         $resolvedImagePath = Get-AbsolutePath -Path $ImagePath
-#     }
-#     catch {
-#         Append-TextParagraph -Document $Document -Text "[画像パス解決失敗: $ImagePath]" -StyleConfig $Config.Styles.Body | Out-Null
-#         return
-#     }
-
-#     if (-not (Test-Path -LiteralPath $resolvedImagePath)) {
-#         Append-TextParagraph -Document $Document -Text "[画像が見つかりません: $resolvedImagePath]" -StyleConfig $Config.Styles.Body | Out-Null
-#         return
-#     }
-
-#     $ext = [System.IO.Path]::GetExtension($resolvedImagePath).ToLowerInvariant()
-#     #if ($ext -eq ".svg") {
-#     #    Append-TextParagraph -Document $Document -Text "[SVG は未対応のためスキップ: $resolvedImagePath]" -StyleConfig $Config.Styles.Body | Out-Null
-#     #    return
-#     #}
-
-#     try {
-#         $range = $Document.Content
-#         $range.Collapse(0)
-#         $shape = $Document.InlineShapes.AddPicture($resolvedImagePath, $false, $true, $range)
-#         $shape.Range.ParagraphFormat.KeepTogether = $true
-#     }
-#     catch {
-#         Append-TextParagraph -Document $Document -Text "[画像挿入失敗: $resolvedImagePath]" -StyleConfig $Config.Styles.Body | Out-Null
-#         Append-TextParagraph -Document $Document -Text ("[詳細] " + $_.Exception.Message) -StyleConfig $Config.Styles.Code | Out-Null
-#         return
-#     }
-
-#     try {
-#         if ($Config.Image -and $Config.Image.MaxWidthMm) {
-#             $points = $Document.Application.MillimetersToPoints([double]$Config.Image.MaxWidthMm)
-#             if ($shape.Width -gt $points) {
-#                 $shape.LockAspectRatio = $true
-#                 $shape.Width = $points
-#             }
-#         }
-#     }
-#     catch {
-#         Append-TextParagraph -Document $Document -Text "[画像サイズ調整失敗: $resolvedImagePath]" -StyleConfig $Config.Styles.Body | Out-Null
-#     }
-
-#     $Document.Content.InsertParagraphAfter() | Out-Null
-# }
 
 function Set-HeaderFooter {
     param(
@@ -3035,14 +2738,15 @@ function Build-WordDocument {
                     }
 
                     # =============================
-                    # ② 節（Level2）
+                    # ② 節（Level2）以降
                     # =============================
-                    elseif ($level -eq 2) {
+                    else {
 
                         # 条件で空行挿入
                         if (
                             -not $justAfterPageBreak -and
-                            -not ($lastElementType -eq 'heading' -and $lastHeadingLevel -eq 1)
+                            -not ($lastElementType -eq 'heading')
+                            #-not ($lastElementType -eq 'heading' -and $lastHeadingLevel -eq 1)
                         ) {
                             Append-BlankParagraph -Document $document
                         }
@@ -3305,7 +3009,10 @@ function Build-WordDocument {
     }
     finally {
         if ($document -ne $null) {
-            try { [System.Runtime.InteropServices.Marshal]::ReleaseComObject($document) | Out-Null } catch {}
+            try { 
+                $document.Close() | Out-Null
+                [System.Runtime.InteropServices.Marshal]::ReleaseComObject($document) | Out-Null 
+            } catch {}
         }
         if ($word -ne $null) {
             try { [System.Runtime.InteropServices.Marshal]::ReleaseComObject($word) | Out-Null } catch {}

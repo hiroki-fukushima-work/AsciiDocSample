@@ -193,6 +193,16 @@
       "NOTE": "D9E1F2",
       "TIP": "E2EFDA"
     },
+    "CodeCaption": {
+      "FontName": "游ゴシック",
+      "Size": 10,
+      "Bold": true,
+      "Alignment": "center",
+      "SpaceBefore": 6,
+      "SpaceAfter": 3,
+      "KeepWithNext": true,
+      "LineSpacingRule": "Exactly"
+    },
     "Code": {
       "FontName": "Cascadia Code",
       "Size": 9,
