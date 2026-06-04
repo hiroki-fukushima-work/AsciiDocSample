@@ -1,9 +1,14 @@
 ﻿[CmdletBinding()]
 
 param(
-    [string]$AdocFullPath  = "C:\Users\hrfukusi\FUJISOFT INCORPORATED\ランディス様_AMI監視案件 - Work\試験項目の作成\manual\TestCaseCreator.adoc",
-    [string]$OutputFullPath = "C:\Users\hrfukusi\FUJISOFT INCORPORATED\ランディス様_AMI監視案件 - Work\試験項目の作成\manual\out\TestCaseCreator.docx",
-    [string]$ConfigFullPath = "C:\Users\hrfukusi\FUJISOFT INCORPORATED\ランディス様_AMI監視案件 - Work\試験項目の作成\manual\conf\word-style.sample.json"
+    [string]$AdocFullPath  = "C:\workspace\AsciiDocSampleGitHub\AsciiDocSample.adoc",
+    [string]$OutputFullPath = "C:\workspace\AsciiDocSampleGitHub\out\AsciiDocSample.docx",
+    [string]$ConfigFullPath = "C:\workspace\AsciiDocSampleGitHub\conf\word-style.sample.json"
+
+    # [string]$AdocFullPath  = "C:\Users\hrfukusi\FUJISOFT INCORPORATED\ランディス様_AMI監視案件 - Work\試験項目の作成\manual\TestCaseCreator.adoc",
+    # [string]$OutputFullPath = "C:\Users\hrfukusi\FUJISOFT INCORPORATED\ランディス様_AMI監視案件 - Work\試験項目の作成\manual\out\TestCaseCreator.docx",
+    # [string]$ConfigFullPath = "C:\Users\hrfukusi\FUJISOFT INCORPORATED\ランディス様_AMI監視案件 - Work\試験項目の作成\manual\conf\word-style.sample.json"
+    
 )
 
 $script:DebugLogPath = Join-Path $PSScriptRoot 'convert-debug.log'
@@ -394,18 +399,18 @@ function Apply-ParagraphStyle {
 function Format-AdmonitionText {
     param(
         [string]$Kind,
-        [string]$Text
+        [string]$Text,
+        $LabelConfig
     )
 
     switch ($Kind) {
-        'IMPORTANT' { return "❗ IMPORTANT: $Text" }
-        'WARNING'   { return "⚠ WARNING: $Text" }
-        'CAUTION'   { return "⚠ CAUTION: $Text" }
-        'NOTE'      { return "📝 NOTE: $Text" }
-        'TIP'       { return "💡 TIP: $Text" }
+        'IMPORTANT' { return "$($LabelConfig.Important) $Text" }
+        'WARNING'   { return "$($LabelConfig.Warning) $Text" }
+        'CAUTION'   { return "$($LabelConfig.Caution) $Text" }
+        'NOTE'      { return "$($LabelConfig.Note) $Text" }
+        'TIP'       { return "$($LabelConfig.Tip) $Text" }
         default     { return "[$Kind] $Text" }
     }
-
 }
 function Parse-InlineText {
     param([string]$Text)
@@ -784,35 +789,61 @@ function Edit-CoverPage {
         '%%著作権%%'       = [string]$Metadata.Copyright
     }
 
-    foreach ($findText in $replaceMap.Keys) {
+    $ranges = @()
 
-        $replaceText = $replaceMap[$findText]
+    # 本文
+    $ranges += $Document.Content
 
-        $find = $Document.Content.Find
 
-        $find.ClearFormatting()
-        $find.Replacement.ClearFormatting()
+    foreach ($section in $Document.Sections) {
 
-        $find.Text = $findText
-        $find.Replacement.Text = $replaceText
+        foreach ($hf in $section.Headers) {
+            if ($hf.Exists -and -not $hf.LinkToPrevious) {
+                $ranges += $hf.Range
+            }
+        }
 
-        $find.Forward = $true
-        $find.Wrap = 1
-        $find.Format = $false
+        foreach ($hf in $section.Footers) {
+            if ($hf.Exists -and -not $hf.LinkToPrevious) {
+                $ranges += $hf.Range
+            }
+        }
+    }
 
-        $find.Execute(
-            [ref]$findText,
-            [ref]$false,
-            [ref]$false,
-            [ref]$false,
-            [ref]$false,
-            [ref]$false,
-            [ref]$true,
-            [ref]1,
-            [ref]$false,
-            [ref]$replaceText,
-            [ref]2
-        ) | Out-Null
+    foreach ($range in $ranges) {
+        foreach ($findText in $replaceMap.Keys) {
+
+            $replaceText = $replaceMap[$findText]
+
+            $find = $range.Find
+
+            $find.ClearFormatting()
+            $find.Replacement.ClearFormatting()
+
+            $find.Text = $findText
+            $find.Replacement.Text = $replaceText
+
+            $find.Forward = $true
+            $find.Wrap = 1
+            $find.Format = $false
+            $find.MatchWildcards = $false
+            $find.MatchCase = $false
+            $find.MatchWholeWord = $false
+
+            $find.Execute(
+                [ref]$findText,
+                [ref]$false,
+                [ref]$false,
+                [ref]$false,
+                [ref]$false,
+                [ref]$false,
+                [ref]$true,
+                [ref]1,
+                [ref]$false,
+                [ref]$replaceText,
+                [ref]2
+            ) | Out-Null
+        }
     }
 }
 
@@ -983,28 +1014,25 @@ function Set-BodyFooterPageNumber {
 
     $range = $footer.Range
     $range.Text = ''
-    $range.ParagraphFormat.Alignment = 1 # center
+    $range.ParagraphFormat.Alignment = 1
 
-    # フッター終端文字の直前を使う
-    $range = $footer.Range
-    $range.Collapse((Get-WordConstant 'wdCollapseEnd'))
-    $range.MoveEnd(1, -1) | Out-Null
+    # ✅ まずプレースホルダ文字列を作る
+    $range.Text = "0/0"
 
-    # PAGE
-    $Document.Fields.Add($range, -1, 'PAGE', $true) | Out-Null
+    # ✅ 1文字目をPAGEに
+    $char1 = $range.Characters.Item(1)
+    $Document.Fields.Add($char1, -1, 'PAGE', $true) | Out-Null
 
-    $range = $footer.Range
-    $range.Collapse((Get-WordConstant 'wdCollapseEnd'))
-    $range.MoveEnd(1, -1) | Out-Null
-    $range.InsertAfter('/')
+    # ✅ 3文字目をSECTIONPAGESに
+    $char3 = $range.Characters.Item(3)
+    $Document.Fields.Add($char3, -1, 'SECTIONPAGES', $true) | Out-Null
 
-    $range = $footer.Range
-    $range.Collapse((Get-WordConstant 'wdCollapseEnd'))
-    $range.MoveEnd(1, -1) | Out-Null
-
-    # SECTIONPAGES
-    $Document.Fields.Add($range, -1, 'SECTIONPAGES', $true) | Out-Null
+    # 更新
+    $Document.Repaginate() | Out-Null
+    $Document.Fields.Update() | Out-Null
 }
+
+
 
 function Add-PageBreakToDocument {
     param($Document)
@@ -1072,13 +1100,24 @@ function Append-HeadingParagraph {
 function Add-TableOfContents {
     param($Document, $Config)
 
-    
     Append-HeadingParagraph -Document $Document -Text '目次' -Level 1 -StyleConfig $Config.Styles.Heading1 | Out-Null
 
     $range = $Document.Content
     $range.Collapse((Get-WordConstant 'wdCollapseEnd'))
 
     $Document.TablesOfContents.Add($range, $true, 1, 3) | Out-Null
+            
+    $section = $Document.Sections[$Document.Sections.Count]
+
+    foreach ($hf in $section.Headers + $section.Footers) {
+        $hf.LinkToPrevious = $false
+    }
+
+    # 明示的にフッダーを空にする
+    foreach ($footer in $section.Footers) {
+        $footer.Range.Text = ""
+    }
+
 }
 
 function Get-ColumnCountFromColsAttribute {
@@ -1637,7 +1676,12 @@ function Add-ImageToDocument {
         } catch {}
     }
     else {
-        $text = "【画像が見つかりません】`r$ImagePath"
+        $text = "【画像が見つかりません】:$ImagePath"
+        Write-Host $text -ForegroundColor Red
+        $warningConfig = $Config.Styles.Body | ConvertTo-Json -Depth 10 | ConvertFrom-Json
+
+        $warningConfig.Color = 'FF0000' # 赤
+        $warningConfig.Bold = $true
 
         Append-TextParagraph `
             -Document $Document `
@@ -2649,14 +2693,13 @@ function Build-WordDocument {
         
         foreach ($element in $Parsed.Elements) {
             if (-not $tocInserted -and $hasTitlePage -and $element.Type -ne 'title') {
-                if (-not $usingCoverTemplate) {
-                    Add-PageBreakToDocument -Document $document
-                    $justAfterPageBreak = $true
-                }
+                Add-SectionBreakToDocument -Document $document
+                $justAfterPageBreak = $true
 
                 Add-TableOfContents -Document $document -Config $Config
                 Add-SectionBreakToDocument -Document $document
                 Set-BodyFooterPageNumber -Document $document                
+                $justAfterPageBreak = $true
                 $tocInserted = $true
             }
 
@@ -2683,42 +2726,10 @@ function Build-WordDocument {
             switch ($element.Type) {
                 'title' {
                     
-                    Set-HeaderFooter -Document $document -Config $Config -Metadata $metadata -IsCovePage $true
+                    #Set-HeaderFooter -Document $document -Config $Config -Metadata $metadata -IsCovePage $true
                     
                     $hasTitlePage = $true
                 }
-                # 'heading' {
-                #     $level = [int]$element.Level
-                #     if ($level -lt 1) { $level = 1 }
-                #     if ($level -gt 6) { $level = 6 }
-
-                #     if ($level -eq 1 -and -not $isFirstHeading) {
-                #         Add-PageBreakToDocument -Document $document
-                #     }
-                #     $isFirstHeading = $false
-
-                #     $headingCounters[$level - 1]++
-                #     for ($i = $level; $i -lt $headingCounters.Length; $i++) {
-                #         $headingCounters[$i] = 0
-                #     }
-
-                #     $nums = New-Object System.Collections.Generic.List[string]
-                #     for ($i = 0; $i -lt $level; $i++) {
-                #         if ($headingCounters[$i] -gt 0) {
-                #             $nums.Add([string]$headingCounters[$i])
-                #         }
-                #     }
-
-                #     $headingText = (($nums -join '.') + ' ' + $element.Text).Trim()
-
-                #     $styleName = 'Heading' + [string]$level
-                #     $styleConfig = $Config.Styles.$styleName
-                #     if (-not $styleConfig) { $styleConfig = $Config.Styles.HeadingDefault }
-
-                #     Append-HeadingParagraph -Document $document -Text $headingText -Level $level -StyleConfig $styleConfig | Out-Null
-                
-                # }
-
                 'heading' {
 
                     $level = [int]$element.Level
@@ -2852,7 +2863,7 @@ function Build-WordDocument {
                 }
                 'admonition' { 
 
-                    $formattedText = Format-AdmonitionText -Kind $element.Kind -Text $element.Text
+                    $formattedText = Format-AdmonitionText -Kind $element.Kind -Text $element.Text -LabelConfig $Config.Styles.Admonition.Label
 
                     $range = Append-TextParagraph `
                         -Document $document `
@@ -2860,7 +2871,7 @@ function Build-WordDocument {
                         -StyleConfig $Config.Styles.Admonition
 
                     # 種類別 背景色
-                    $colorHex = $Config.Styles.AdmonitionColors.$($element.Kind)
+                    $colorHex = $Config.Styles.Admonition.Colors.$($element.Kind)
                     if ($colorHex) {
                         try {
                             $wordColor = Convert-RgbToWordColor $colorHex
@@ -2961,7 +2972,7 @@ function Build-WordDocument {
         if (-not $tocInserted -and $hasTitlePage) {
             Add-PageBreakToDocument -Document $document
             Add-TableOfContents -Document $document -Config $Config
-            
+
             # 目次の直後に本文開始用の改ページを1つだけ入れる
             $range = $document.Content
             $range.Collapse((Get-WordConstant 'wdCollapseEnd'))
@@ -2970,7 +2981,7 @@ function Build-WordDocument {
             $tocInserted = $true
         }
 
-        Set-HeaderFooter -Document $document -Config $Config -Metadata $metadata
+        #Set-HeaderFooter -Document $document -Config $Config -Metadata $metadata
 
         try {
             foreach ($toc in $document.TablesOfContents) {
