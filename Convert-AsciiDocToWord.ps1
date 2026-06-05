@@ -2650,7 +2650,7 @@ function Build-WordDocument {
             $templatePath = Get-AbsolutePath `
                 -Path $Config.CoverPage.TemplatePath `
                 -BaseDirectory $adocDir
-            $document = $word.Documents.Open($templatePath)
+            $document = $word.Documents.Add($templatePath)
 
             #
             # プレースホルダー置換
