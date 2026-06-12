@@ -2667,7 +2667,13 @@ function Build-WordDocument {
             Copyright = [string]($Parsed.Metadata.Copyright)
         }
 
-        $usingCoverTemplate = $false
+
+        $absoluteOutput = Get-AbsolutePath -Path $OutputFullPath
+        $outputDir = Split-Path -Parent $absoluteOutput
+        if (-not (Test-Path $outputDir)) {
+            [void](New-Item -ItemType Directory -Path $outputDir -Force)
+        }
+        
         if (Test-Path $Config.CoverPage.TemplatePath) {
             #
             # 表紙テンプレートをベース文書として開く
@@ -2675,7 +2681,8 @@ function Build-WordDocument {
             $templatePath = Get-AbsolutePath `
                 -Path $Config.CoverPage.TemplatePath `
                 -BaseDirectory $adocDir
-            $document = $word.Documents.Add($templatePath)
+            $document = $word.Documents.Open($templatePath, $false, $true)
+            $document.SaveAs($absoluteOutput)
 
             #
             # プレースホルダー置換
@@ -3016,12 +3023,6 @@ function Build-WordDocument {
             }
         }
         catch {
-        }
-
-        $absoluteOutput = Get-AbsolutePath -Path $OutputFullPath
-        $outputDir = Split-Path -Parent $absoluteOutput
-        if (-not (Test-Path $outputDir)) {
-            [void](New-Item -ItemType Directory -Path $outputDir -Force)
         }
 
         $document.SaveAs([ref]$absoluteOutput, [ref](Get-WordConstant 'wdSaveFormatDocumentDefault'))

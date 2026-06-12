@@ -9,7 +9,7 @@ echo CurrentDir: %~d0%~p0
 
 set ADOC_NAME=AsciiDocSample
 set ADOCBASEPATH=%~d0%~p0
-set SCRIPTBASEPATH=C:\workspace\AsciiDocSampleGitHub
+set SCRIPTBASEPATH=v
 
 del /f /q /s "%ADOCBASEPATH%out" 2>nul
 
