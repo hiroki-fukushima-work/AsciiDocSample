@@ -1,14 +1,9 @@
 ﻿[CmdletBinding()]
 
 param(
-    [string]$AdocFullPath  = "C:\workspace\AsciiDocSampleGitHub\AsciiDocSample.adoc",
-    [string]$OutputFullPath = "C:\workspace\AsciiDocSampleGitHub\out\AsciiDocSample.docx",
-    [string]$ConfigFullPath = "C:\workspace\AsciiDocSampleGitHub\conf\word-style.sample.json"
-
-    # [string]$AdocFullPath  = "C:\Users\hrfukusi\FUJISOFT INCORPORATED\ランディス様_AMI監視案件 - Work\試験項目の作成\manual\TestCaseCreator.adoc",
-    # [string]$OutputFullPath = "C:\Users\hrfukusi\FUJISOFT INCORPORATED\ランディス様_AMI監視案件 - Work\試験項目の作成\manual\out\TestCaseCreator.docx",
-    # [string]$ConfigFullPath = "C:\Users\hrfukusi\FUJISOFT INCORPORATED\ランディス様_AMI監視案件 - Work\試験項目の作成\manual\conf\word-style.sample.json"
-    
+    [string]$AdocFullPath  = ".\AsciiDocSample.adoc",
+    [string]$OutputFullPath = ".\out\AsciiDocSample.docx",
+    [string]$ConfigFullPath = ".\conf\word-style.sample.json"
 )
 
 $script:DebugLogPath = Join-Path $PSScriptRoot 'convert-debug.log'
@@ -17,6 +12,27 @@ Remove-Item $script:DebugLogPath -ErrorAction SilentlyContinue
 function Write-DebugLog {
     param([string]$Message)
     Add-Content -LiteralPath $script:DebugLogPath -Value $Message -Encoding UTF8
+}
+
+# 初期化
+$context = @{
+    Type = $null          # 'number' / 'bullet' / 'text'
+    BulletLevel = 0
+}
+
+function Set-HangingIndent {
+    param(
+        $Range,
+        [float]$IndentWidth = 12
+    )
+
+    $pf = $Range.ParagraphFormat
+
+    # 全体を右へ
+    $pf.LeftIndent = $IndentWidth
+
+    # 1行目だけ左へ戻す（ぶら下げ）
+    $pf.FirstLineIndent = -$IndentWidth
 }
 
 function Resolve-PathFromScript {
@@ -153,7 +169,8 @@ function Load-JsonConfig {
     param([string]$Path)
 
     if (-not (Test-Path $Path)) {
-        throw "設定ファイルが見つかりません: $Path"
+    	$message = "設定ファイルが見つかりません: $($Path)"
+        throw $message
     }
 
     return Get-Content -LiteralPath $Path -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -1490,9 +1507,10 @@ function Add-WordTable {
 
         $sum = ($remainRatios | Measure-Object -Sum).Sum
 
+        $table.AllowAutoFit = $false
+
         if ($ratios.Count -eq $ColumnCount -and $sum -gt 0) {
 
-            $debugWidths = @()
             for ($i = 1; $i -le $ColumnCount; $i++) {
                 $width = 0.0
                 if ($autoNumber -and $i -eq 1) {
@@ -1503,9 +1521,7 @@ function Add-WordTable {
                     # remainRatiosを使わない理由は ループのインデックスはNumber列も含んでいる為
                     # remainRatiosは列を除いた比率を計算するために使っているだけ
                 }
-                #Write-Host "Column $($i): Ratio=$($ratios[$i - 1]) Width=$($width)"
                 $table.Columns.Item($i).Width = [float]$width
-                $debugWidths += $width
             }
         }
         else {
@@ -2448,11 +2464,11 @@ function Parse-AsciiDocFile {
             continue
         }
 
-        if ($trimmed -match '^([\*\-])\s+(.+)$') {
+        if ($trimmed -match '^([\*\-]+)\s+(.+)$') {
             Flush-ParagraphBuffer
             $indentLength = ([regex]::Match($line, '^\s*')).Value.Length
             $level = [Math]::Max(1, [int][Math]::Floor($indentLength / 2) + 1)
-            $elements.Add((New-Element -Type 'bullet' -Data @{ Text = (Normalize-InlineText -Text $matches[2] -Attributes $Attributes); Level = $level }))
+            $elements.Add((New-Element -Type 'bullet' -Data @{ Text = (Normalize-InlineText -Text $matches[2] -Attributes $Attributes); Level = $level; MarkerCount = $matches[1].Length }))
             $lineIndex++
             continue
         }
@@ -2461,12 +2477,13 @@ function Parse-AsciiDocFile {
             Flush-ParagraphBuffer
             $indentLength = ([regex]::Match($line, '^\s*')).Value.Length
             $level = [Math]::Max(1, [int][Math]::Floor($indentLength / 2) + 1)
-            $elements.Add((New-Element -Type 'numbered' -Data @{ Text = (Normalize-InlineText -Text $matches[2] -Attributes $Attributes); Level = $level }))
+            $elements.Add((New-Element -Type 'numbered' -Data @{ Text = (Normalize-InlineText -Text $matches[2] -Attributes $Attributes); Level = $level;}))
             $lineIndex++
             continue
         }
 
         if ($trimmed -match '^\.+\s+(.+)$') {
+            $markerCount = $matches[1].Length
             Flush-ParagraphBuffer
 
             $dotPrefix = ([regex]::Match($trimmed, '^\.+')).Value.Length
@@ -2504,6 +2521,7 @@ function Parse-AsciiDocFile {
             $elements.Add((New-Element -Type 'numbered' -Data @{
                 Text  = $text
                 Level = $dotPrefix
+                MarkerCount = $dotPrefix
             }))
 
             continue
@@ -2572,6 +2590,7 @@ function Add-ListParagraph {
         $Document,
         [string]$Text,
         [int]$Level,
+        [int]$ElementLevel,
         $StyleConfig,
         [switch]$Numbered,
         [int]$ListIndex = 1,
@@ -2583,11 +2602,18 @@ function Add-ListParagraph {
             $prefix = "$($ListIndex)) "
         }
         else {
-            $prefix = "$($ParentIndex)-$($ListIndex)) "
+            $nums = New-Object System.Collections.Generic.List[string]
+            for ($i = 0; $i -lt $Level; $i++) {
+                if ($listCounters[$i] -gt 0) {
+                    $nums.Add([string]$listCounters[$i])
+                }
+            }
+
+            $prefix = ($nums -join '-') + ')'
         }
     }
     else {
-        $prefix = '• '
+        $prefix = '•' * $ElementLevel + ' '
     }
 
     $style = $StyleConfig.PSObject.Copy()
@@ -2642,8 +2668,7 @@ function Build-WordDocument {
         }
 
         $usingCoverTemplate = $false
-        if ($Config.CoverPage.TemplatePath) {
-
+        if (Test-Path $Config.CoverPage.TemplatePath) {
             #
             # 表紙テンプレートをベース文書として開く
             #
@@ -2834,6 +2859,7 @@ function Build-WordDocument {
                         -Document $document `
                         -Text $element.Text `
                         -Level $level `
+                        -ElementLevel $element.MarkerCount `
                         -StyleConfig $Config.Styles.Bullet
                 }
                 'numbered' {
@@ -2856,6 +2882,7 @@ function Build-WordDocument {
                         -Document $document `
                         -Text $element.Text `
                         -Level $level `
+                        -ElementLevel $element.MarkerCount `
                         -StyleConfig $Config.Styles.Numbered `
                         -Numbered `
                         -ParentIndex $parentNo `
