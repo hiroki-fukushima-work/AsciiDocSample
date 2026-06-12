@@ -1,6 +1,6 @@
 
 @echo off
-setlocal enabledelayedexpansion
+setlocal 
 
 REM Create image folder if it doesn't exist
 if not exist images (
