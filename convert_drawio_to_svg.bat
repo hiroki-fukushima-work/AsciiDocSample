@@ -1,5 +1,5 @@
-
 @echo off
+chcp 65001 >nul
 setlocal 
 
 REM Create image folder if it doesn't exist

@@ -1,5 +1,5 @@
 @echo off
-
+chcp 65001 >nul
 setlocal
 
 ECHO ASCII DOC CONVERTER
